@@ -65,7 +65,7 @@ jobs:
 
     steps:
       - name: Checkout FFmpeg
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install build dependencies
         run: |
@@ -307,7 +307,7 @@ jobs:
           "$PACKAGE_DIR/bin/ffmpeg" -hide_banner -filters | grep -E 'overlay_rkrga|scale_rkrga|vpp_rkrga'
 
       - name: Upload FFmpeg package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact }}
           path: ${{ env.PACKAGE_DIR }}
@@ -315,7 +315,7 @@ jobs:
 
       - name: Upload configure log on failure
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: ffmpeg-config-log-${{ matrix.target }}
           path: ffbuild/config.log
