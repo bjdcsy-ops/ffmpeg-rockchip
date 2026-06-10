@@ -319,12 +319,34 @@ jobs:
           file "$PACKAGE_DIR/bin/ffmpeg"
           readelf -d "$PACKAGE_DIR/bin/ffmpeg" | grep -F '$ORIGIN/../lib:$ORIGIN/lib'
           readelf -d "$PACKAGE_DIR/ffmpeg" | grep -F '$ORIGIN/../lib:$ORIGIN/lib'
+          verify_bundled_library() {
+            local ldd_output=$1
+            local soname=$2
+            local library_path
+            local resolved_path
+            local package_lib
+
+            library_path=$(awk -v soname="$soname" '$1 == soname { print $3; found = 1 } END { if (!found) exit 1 }' "$ldd_output")
+            resolved_path=$(realpath "$library_path")
+            package_lib=$(realpath "$PACKAGE_DIR/lib")
+
+            case "$resolved_path" in
+              "$package_lib"/*)
+                printf '%s resolves to bundled library %s\n' "$soname" "$resolved_path"
+                ;;
+              *)
+                printf 'Expected %s to resolve under %s, got %s\n' "$soname" "$package_lib" "$resolved_path" >&2
+                exit 1
+                ;;
+            esac
+          }
+
           env -u LD_LIBRARY_PATH ldd "$PACKAGE_DIR/bin/ffmpeg" | tee "$BUILD_ROOT/ldd-bin.txt"
-          grep -F "$PACKAGE_DIR/lib/librga.so" "$BUILD_ROOT/ldd-bin.txt"
-          grep -F "$PACKAGE_DIR/lib/librockchip_mpp.so" "$BUILD_ROOT/ldd-bin.txt"
+          verify_bundled_library "$BUILD_ROOT/ldd-bin.txt" librga.so.2
+          verify_bundled_library "$BUILD_ROOT/ldd-bin.txt" librockchip_mpp.so.1
           env -u LD_LIBRARY_PATH ldd "$PACKAGE_DIR/ffmpeg" | tee "$BUILD_ROOT/ldd-root.txt"
-          grep -F "$PACKAGE_DIR/lib/librga.so" "$BUILD_ROOT/ldd-root.txt"
-          grep -F "$PACKAGE_DIR/lib/librockchip_mpp.so" "$BUILD_ROOT/ldd-root.txt"
+          verify_bundled_library "$BUILD_ROOT/ldd-root.txt" librga.so.2
+          verify_bundled_library "$BUILD_ROOT/ldd-root.txt" librockchip_mpp.so.1
           "$PACKAGE_DIR/bin/ffmpeg" -hide_banner -decoders | grep -E 'h264_rkmpp|hevc_rkmpp'
           "$PACKAGE_DIR/bin/ffmpeg" -hide_banner -encoders | grep -E 'h264_rkmpp|hevc_rkmpp'
           "$PACKAGE_DIR/bin/ffmpeg" -hide_banner -demuxers | grep -E 'rtsp|rtp|sdp|mpegts'
