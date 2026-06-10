@@ -82,6 +82,7 @@ jobs:
             meson \
             nasm \
             ninja-build \
+            patchelf \
             pkg-config \
             yasm
           sudo apt-get install -y --no-install-recommends libdrm-dev
@@ -192,6 +193,9 @@ jobs:
             --enable-decoder=hevc_rkmpp
             --enable-encoder=h264_rkmpp
             --enable-encoder=hevc_rkmpp
+            --enable-filter=hwdownload
+            --enable-filter=hwmap
+            --enable-filter=hwupload
             --enable-filter=scale_rkrga
             --enable-filter=vpp_rkrga
             --enable-filter=overlay_rkrga
@@ -201,11 +205,9 @@ jobs:
             --cpu=${{ matrix.ffmpeg_cpu }}
             --extra-cflags="-I$DEPS_PREFIX/include $TARGET_CFLAGS"
             --extra-ldflags="-L$DEPS_PREFIX/lib $TARGET_LDFLAGS"
-            '--extra-ldexeflags=-Wl,-rpath,\\\$\$ORIGIN/../lib'
           )
 
           ./configure "${configure_args[@]}"
-          grep -F 'LDEXEFLAGS= -Wl,-rpath,\$$ORIGIN/../lib' ffbuild/config.mak
 
       - name: Build and install FFmpeg
         run: |
@@ -213,6 +215,15 @@ jobs:
 
           make -j"$(nproc)"
           make install
+
+      - name: Set package runtime library paths
+        run: |
+          set -euxo pipefail
+
+          patchelf --set-rpath '$ORIGIN/../lib:$ORIGIN/lib' "$INSTALL_PREFIX/bin/ffmpeg"
+          patchelf --set-rpath '$ORIGIN/../lib:$ORIGIN/lib' "$INSTALL_PREFIX/bin/ffprobe"
+          readelf -d "$INSTALL_PREFIX/bin/ffmpeg" | grep -F '$ORIGIN/../lib:$ORIGIN/lib'
+          readelf -d "$INSTALL_PREFIX/bin/ffprobe" | grep -F '$ORIGIN/../lib:$ORIGIN/lib'
 
       - name: Verify configured components
         run: |
@@ -249,6 +260,9 @@ jobs:
             CONFIG_UDP_PROTOCOL
             CONFIG_RTP_PROTOCOL
             CONFIG_HTTP_PROTOCOL
+            CONFIG_HWDOWNLOAD_FILTER
+            CONFIG_HWMAP_FILTER
+            CONFIG_HWUPLOAD_FILTER
             CONFIG_SCALE_RKRGA_FILTER
             CONFIG_VPP_RKRGA_FILTER
             CONFIG_OVERLAY_RKRGA_FILTER
@@ -269,6 +283,8 @@ jobs:
 
           shopt -s nullglob
           cp -a "$DEPS_PREFIX"/lib/*.so* "$PACKAGE_DIR/lib/"
+          cp -a "$PACKAGE_DIR/bin/ffmpeg" "$PACKAGE_DIR/ffmpeg"
+          cp -a "$PACKAGE_DIR/bin/ffprobe" "$PACKAGE_DIR/ffprobe"
 
           {
             echo "target=${{ matrix.target }}"
@@ -287,6 +303,8 @@ jobs:
           MPP and RGA are packaged under lib/. FFmpeg is intentionally
           component-pruned for RTSP/RTP, H.264/HEVC rkmpp codecs, and RGA
           filters instead of full general-purpose codec coverage.
+          Run ./ffmpeg from this directory or ./bin/ffmpeg from bin/ so the
+          embedded runtime path can resolve the bundled lib/ directory.
 
           Smoke checks:
             ./bin/ffmpeg -decoders | grep rkmpp
@@ -299,12 +317,19 @@ jobs:
           set -euxo pipefail
 
           file "$PACKAGE_DIR/bin/ffmpeg"
-          readelf -d "$PACKAGE_DIR/bin/ffmpeg" | grep -F '$ORIGIN/../lib'
+          readelf -d "$PACKAGE_DIR/bin/ffmpeg" | grep -F '$ORIGIN/../lib:$ORIGIN/lib'
+          readelf -d "$PACKAGE_DIR/ffmpeg" | grep -F '$ORIGIN/../lib:$ORIGIN/lib'
+          env -u LD_LIBRARY_PATH ldd "$PACKAGE_DIR/bin/ffmpeg" | tee "$BUILD_ROOT/ldd-bin.txt"
+          grep -F "$PACKAGE_DIR/lib/librga.so" "$BUILD_ROOT/ldd-bin.txt"
+          grep -F "$PACKAGE_DIR/lib/librockchip_mpp.so" "$BUILD_ROOT/ldd-bin.txt"
+          env -u LD_LIBRARY_PATH ldd "$PACKAGE_DIR/ffmpeg" | tee "$BUILD_ROOT/ldd-root.txt"
+          grep -F "$PACKAGE_DIR/lib/librga.so" "$BUILD_ROOT/ldd-root.txt"
+          grep -F "$PACKAGE_DIR/lib/librockchip_mpp.so" "$BUILD_ROOT/ldd-root.txt"
           "$PACKAGE_DIR/bin/ffmpeg" -hide_banner -decoders | grep -E 'h264_rkmpp|hevc_rkmpp'
           "$PACKAGE_DIR/bin/ffmpeg" -hide_banner -encoders | grep -E 'h264_rkmpp|hevc_rkmpp'
           "$PACKAGE_DIR/bin/ffmpeg" -hide_banner -demuxers | grep -E 'rtsp|rtp|sdp|mpegts'
           "$PACKAGE_DIR/bin/ffmpeg" -hide_banner -muxers | grep -E 'rtsp|rtp|mpegts'
-          "$PACKAGE_DIR/bin/ffmpeg" -hide_banner -filters | grep -E 'overlay_rkrga|scale_rkrga|vpp_rkrga'
+          "$PACKAGE_DIR/bin/ffmpeg" -hide_banner -filters | grep -E 'hwdownload|hwmap|hwupload|overlay_rkrga|scale_rkrga|vpp_rkrga'
 
       - name: Upload FFmpeg package
         uses: actions/upload-artifact@v6
