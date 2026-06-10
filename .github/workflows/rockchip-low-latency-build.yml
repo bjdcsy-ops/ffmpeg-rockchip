@@ -20,7 +20,7 @@ concurrency:
 env:
   MPP_REPOSITORY: https://github.com/nyanmisaka/mpp.git
   MPP_BRANCH: jellyfin-mpp
-  RGA_REPOSITORY: https://gitee.com/nyanmisaka/rga.git
+  RGA_REPOSITORY: https://github.com/nyanmisaka/rk-mirrors.git
   RGA_BRANCH: jellyfin-rga
   ROCKCHIP_DEPS_CACHE_VERSION: v1
   CCACHE_CACHE_VERSION: v1
