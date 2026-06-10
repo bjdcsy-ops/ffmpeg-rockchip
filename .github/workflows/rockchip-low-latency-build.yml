@@ -406,6 +406,7 @@ jobs:
         run: |
           set -euxo pipefail
 
+          mkdir -p "$BUILD_ROOT"
           test ! -e "$PACKAGE_DIR/bin"
           file "$PACKAGE_DIR/ffmpeg"
           readelf -d "$PACKAGE_DIR/ffmpeg" | grep -F '$ORIGIN/../lib:$ORIGIN/lib'
