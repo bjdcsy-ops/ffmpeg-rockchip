@@ -107,25 +107,27 @@ jobs:
           mpp_sha=$(git_branch_sha "$MPP_REPOSITORY" "$MPP_BRANCH")
           rga_sha=$(git_branch_sha "$RGA_REPOSITORY" "$RGA_BRANCH")
 
-          deps_cache_key=$(
+          mpp_sha_short=${mpp_sha:0:12}
+          rga_sha_short=${rga_sha:0:12}
+          flags_key=$(
             {
-              printf 'cache_version=%s\n' "$ROCKCHIP_DEPS_CACHE_VERSION"
-              printf 'target=%s\n' '${{ matrix.target }}'
-              printf 'mpp_repository=%s\n' "$MPP_REPOSITORY"
-              printf 'mpp_branch=%s\n' "$MPP_BRANCH"
-              printf 'mpp_sha=%s\n' "$mpp_sha"
-              printf 'rga_repository=%s\n' "$RGA_REPOSITORY"
-              printf 'rga_branch=%s\n' "$RGA_BRANCH"
-              printf 'rga_sha=%s\n' "$rga_sha"
               printf 'target_cflags=%s\n' "$TARGET_CFLAGS"
               printf 'target_ldflags=%s\n' "$TARGET_LDFLAGS"
-            } | sha256sum | awk '{ print $1 }'
+            } | sha256sum | cut -c1-12
           )
+          deps_cache_key="${ROCKCHIP_DEPS_CACHE_VERSION}-mpp-${mpp_sha_short}-rga-${rga_sha_short}-flags-${flags_key}"
+          ccache_period=$(date -u +%G-W%V)
+
+          printf 'Rockchip dependency cache: rockchip-deps-%s-%s-%s\n' '${{ matrix.runner }}' '${{ matrix.target }}' "$deps_cache_key"
+          printf 'Compiler cache: ccache-%s-%s-%s-%s\n' '${{ matrix.runner }}' '${{ matrix.target }}' "$CCACHE_CACHE_VERSION" "$ccache_period"
+          printf 'MPP revision: %s (%s)\n' "$mpp_sha" "$MPP_BRANCH"
+          printf 'RGA revision: %s (%s)\n' "$rga_sha" "$RGA_BRANCH"
 
           {
             echo "mpp_sha=$mpp_sha"
             echo "rga_sha=$rga_sha"
             echo "cache_key=$deps_cache_key"
+            echo "ccache_period=$ccache_period"
           } >> "$GITHUB_OUTPUT"
 
       - name: Restore Rockchip dependency cache
@@ -140,7 +142,7 @@ jobs:
         uses: actions/cache/restore@v5
         with:
           path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ matrix.runner }}-${{ matrix.target }}-${{ env.CCACHE_CACHE_VERSION }}-${{ github.sha }}
+          key: ccache-${{ matrix.runner }}-${{ matrix.target }}-${{ env.CCACHE_CACHE_VERSION }}-${{ steps.rockchip_deps.outputs.ccache_period }}
           restore-keys: |
             ccache-${{ matrix.runner }}-${{ matrix.target }}-${{ env.CCACHE_CACHE_VERSION }}-
 
