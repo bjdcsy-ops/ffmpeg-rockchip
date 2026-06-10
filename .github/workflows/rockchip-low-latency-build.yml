@@ -1,0 +1,320 @@
+name: Build Rockchip low-latency FFmpeg
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: rockchip-low-latency-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  MPP_REPOSITORY: https://gitee.com/nyanmisaka/mpp.git
+  MPP_BRANCH: jellyfin-mpp
+  RGA_REPOSITORY: https://gitee.com/nyanmisaka/rga.git
+  RGA_BRANCH: jellyfin-rga
+
+jobs:
+  build:
+    name: ${{ matrix.target }} low-latency
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: rk3588
+            runner: ubuntu-22.04-arm
+            artifact: ffmpeg-rockchip-rk3588-ubuntu22-arm64
+            ffmpeg_arch: aarch64
+            ffmpeg_cpu: cortex-a76.cortex-a55
+            target_cflags: -O3 -pipe -mcpu=cortex-a76.cortex-a55 -mtune=cortex-a76.cortex-a55 -fno-semantic-interposition
+            target_ldflags: ""
+          - target: rk3576
+            runner: ubuntu-22.04-arm
+            artifact: ffmpeg-rockchip-rk3576-ubuntu22-arm64
+            ffmpeg_arch: aarch64
+            ffmpeg_cpu: cortex-a72.cortex-a53
+            target_cflags: -O3 -pipe -mcpu=cortex-a72.cortex-a53 -mtune=cortex-a72.cortex-a53 -fno-semantic-interposition
+            target_ldflags: ""
+          - target: rv1126b
+            runner: ubuntu-22.04-arm
+            artifact: ffmpeg-rockchip-rv1126b-ubuntu22-arm64
+            ffmpeg_arch: aarch64
+            ffmpeg_cpu: cortex-a53
+            target_cflags: -O3 -pipe -mcpu=cortex-a53 -mtune=cortex-a53 -fno-semantic-interposition
+            target_ldflags: ""
+
+    env:
+      BUILD_ROOT: ${{ github.workspace }}/.build/${{ matrix.target }}
+      DEPS_PREFIX: ${{ github.workspace }}/lib/${{ matrix.target }}
+      INSTALL_PREFIX: ${{ github.workspace }}/dist/${{ matrix.target }}
+      PACKAGE_DIR: ${{ github.workspace }}/artifact/${{ matrix.artifact }}
+      TARGET_CFLAGS: ${{ matrix.target_cflags }}
+      TARGET_LDFLAGS: ${{ matrix.target_ldflags }}
+
+    steps:
+      - name: Checkout FFmpeg
+        uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          set -euxo pipefail
+
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential \
+            ca-certificates \
+            binutils \
+            cmake \
+            file \
+            git \
+            meson \
+            nasm \
+            ninja-build \
+            pkg-config \
+            yasm
+          sudo apt-get install -y --no-install-recommends libdrm-dev
+
+      - name: Build and install MPP
+        run: |
+          set -euxo pipefail
+
+          mkdir -p "$BUILD_ROOT" "$DEPS_PREFIX"
+          git clone --depth=1 --branch "$MPP_BRANCH" "$MPP_REPOSITORY" "$BUILD_ROOT/rkmpp"
+
+          cmake_args=(
+            -DCMAKE_INSTALL_PREFIX="$DEPS_PREFIX"
+            -DCMAKE_INSTALL_LIBDIR=lib
+            -DCMAKE_BUILD_TYPE=Release
+            -DCMAKE_C_FLAGS_RELEASE="$TARGET_CFLAGS -DNDEBUG"
+            -DCMAKE_CXX_FLAGS_RELEASE="$TARGET_CFLAGS -DNDEBUG"
+            -DBUILD_SHARED_LIBS=ON
+            -DBUILD_TEST=OFF
+          )
+
+          cmake -S "$BUILD_ROOT/rkmpp" -B "$BUILD_ROOT/rkmpp-build" "${cmake_args[@]}"
+          cmake --build "$BUILD_ROOT/rkmpp-build" --parallel "$(nproc)"
+          cmake --install "$BUILD_ROOT/rkmpp-build"
+
+      - name: Build and install RGA
+        run: |
+          set -euxo pipefail
+
+          git clone --depth=1 --branch "$RGA_BRANCH" "$RGA_REPOSITORY" "$BUILD_ROOT/rkrga"
+
+          export CFLAGS="$TARGET_CFLAGS"
+          export CXXFLAGS="$TARGET_CFLAGS -fpermissive"
+          export LDFLAGS="$TARGET_LDFLAGS"
+
+          meson_args=(
+            --prefix="$DEPS_PREFIX"
+            --libdir=lib
+            --buildtype=release
+            --default-library=shared
+            -Dlibdrm=false
+            -Dlibrga_demo=false
+          )
+
+          meson setup "$BUILD_ROOT/rkrga" "$BUILD_ROOT/rkrga-build" "${meson_args[@]}"
+          meson compile -C "$BUILD_ROOT/rkrga-build"
+          meson install -C "$BUILD_ROOT/rkrga-build"
+
+      - name: Show Rockchip dependency metadata
+        run: |
+          set -euxo pipefail
+
+          export PKG_CONFIG_PATH="$DEPS_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+
+          pkg-config --modversion rockchip_mpp
+          pkg-config --modversion librga
+          pkg-config --modversion libdrm
+          pkg-config --cflags --libs rockchip_mpp librga libdrm
+          find "$DEPS_PREFIX" -maxdepth 3 -type f | sort
+
+      - name: Configure FFmpeg
+        run: |
+          set -euxo pipefail
+
+          export PKG_CONFIG_PATH="$DEPS_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+
+          configure_args=(
+            --prefix="$INSTALL_PREFIX"
+            --disable-debug
+            --disable-doc
+            --disable-ffplay
+            --disable-everything
+            --disable-autodetect
+            --enable-gpl
+            --enable-version3
+            --enable-lto=auto
+            --enable-libdrm
+            --enable-rkmpp
+            --enable-rkrga
+            --enable-network
+            --enable-protocol=file
+            --enable-protocol=pipe
+            --enable-protocol=tcp
+            --enable-protocol=udp
+            --enable-protocol=rtp
+            --enable-protocol=http
+            --enable-demuxer=rtsp
+            --enable-demuxer=rtp
+            --enable-demuxer=sdp
+            --enable-demuxer=mpegts
+            --enable-demuxer=h264
+            --enable-demuxer=hevc
+            --enable-demuxer=mov
+            --enable-muxer=rtsp
+            --enable-muxer=rtp
+            --enable-muxer=rtp_mpegts
+            --enable-muxer=mpegts
+            --enable-muxer=h264
+            --enable-muxer=hevc
+            --enable-muxer=mp4
+            --enable-muxer=mov
+            --enable-muxer=null
+            --enable-parser=h264
+            --enable-parser=hevc
+            --enable-bsf=h264_mp4toannexb
+            --enable-bsf=hevc_mp4toannexb
+            --enable-decoder=h264_rkmpp
+            --enable-decoder=hevc_rkmpp
+            --enable-encoder=h264_rkmpp
+            --enable-encoder=hevc_rkmpp
+            --enable-filter=scale_rkrga
+            --enable-filter=vpp_rkrga
+            --enable-filter=overlay_rkrga
+            --enable-filter=format
+            --enable-filter=null
+            --arch=${{ matrix.ffmpeg_arch }}
+            --cpu=${{ matrix.ffmpeg_cpu }}
+            --extra-cflags="-I$DEPS_PREFIX/include $TARGET_CFLAGS"
+            --extra-ldflags="-L$DEPS_PREFIX/lib -Wl,-rpath,\$ORIGIN/../lib $TARGET_LDFLAGS"
+          )
+
+          ./configure "${configure_args[@]}"
+
+      - name: Build and install FFmpeg
+        run: |
+          set -euxo pipefail
+
+          make -j"$(nproc)"
+          make install
+
+      - name: Verify configured components
+        run: |
+          set -euxo pipefail
+
+          required_configs=(
+            CONFIG_H264_RKMPP_DECODER
+            CONFIG_HEVC_RKMPP_DECODER
+            CONFIG_H264_RKMPP_ENCODER
+            CONFIG_HEVC_RKMPP_ENCODER
+            CONFIG_RTSP_DEMUXER
+            CONFIG_RTP_DEMUXER
+            CONFIG_SDP_DEMUXER
+            CONFIG_MPEGTS_DEMUXER
+            CONFIG_H264_DEMUXER
+            CONFIG_HEVC_DEMUXER
+            CONFIG_MOV_DEMUXER
+            CONFIG_RTSP_MUXER
+            CONFIG_RTP_MUXER
+            CONFIG_RTP_MPEGTS_MUXER
+            CONFIG_MPEGTS_MUXER
+            CONFIG_H264_MUXER
+            CONFIG_HEVC_MUXER
+            CONFIG_MP4_MUXER
+            CONFIG_MOV_MUXER
+            CONFIG_NULL_MUXER
+            CONFIG_H264_PARSER
+            CONFIG_HEVC_PARSER
+            CONFIG_H264_MP4TOANNEXB_BSF
+            CONFIG_HEVC_MP4TOANNEXB_BSF
+            CONFIG_FILE_PROTOCOL
+            CONFIG_PIPE_PROTOCOL
+            CONFIG_TCP_PROTOCOL
+            CONFIG_UDP_PROTOCOL
+            CONFIG_RTP_PROTOCOL
+            CONFIG_HTTP_PROTOCOL
+            CONFIG_SCALE_RKRGA_FILTER
+            CONFIG_VPP_RKRGA_FILTER
+            CONFIG_OVERLAY_RKRGA_FILTER
+            CONFIG_FORMAT_FILTER
+            CONFIG_NULL_FILTER
+          )
+
+          for config_name in "${required_configs[@]}"; do
+            grep -qx "${config_name}=yes" ffbuild/config.mak
+          done
+
+      - name: Package runtime
+        run: |
+          set -euxo pipefail
+
+          mkdir -p "$PACKAGE_DIR/lib"
+          cp -a "$INSTALL_PREFIX/." "$PACKAGE_DIR/"
+
+          shopt -s nullglob
+          cp -a "$DEPS_PREFIX"/lib/*.so* "$PACKAGE_DIR/lib/"
+
+          {
+            echo "target=${{ matrix.target }}"
+            echo "artifact=${{ matrix.artifact }}"
+            echo "runner=$(uname -m)"
+            echo "ffmpeg_arch=${{ matrix.ffmpeg_arch }}"
+            echo "ffmpeg_cpu=${{ matrix.ffmpeg_cpu }}"
+            echo "target_cflags=$TARGET_CFLAGS"
+            getconf GNU_LIBC_VERSION || true
+          } > "$PACKAGE_DIR/BUILDINFO.txt"
+
+          cat > "$PACKAGE_DIR/README.txt" <<EOF
+          ffmpeg-rockchip low-latency ${{ matrix.target }} build
+
+          Built on Ubuntu 22.04 with LTO and target-specific CPU flags.
+          MPP and RGA are packaged under lib/. FFmpeg is intentionally
+          component-pruned for RTSP/RTP, H.264/HEVC rkmpp codecs, and RGA
+          filters instead of full general-purpose codec coverage.
+
+          Smoke checks:
+            ./bin/ffmpeg -decoders | grep rkmpp
+            ./bin/ffmpeg -encoders | grep rkmpp
+            ./bin/ffmpeg -filters | grep rkrga
+          EOF
+
+      - name: Verify native package
+        run: |
+          set -euxo pipefail
+
+          file "$PACKAGE_DIR/bin/ffmpeg"
+          readelf -d "$PACKAGE_DIR/bin/ffmpeg" | grep -F '$ORIGIN/../lib'
+          "$PACKAGE_DIR/bin/ffmpeg" -hide_banner -decoders | grep -E 'h264_rkmpp|hevc_rkmpp'
+          "$PACKAGE_DIR/bin/ffmpeg" -hide_banner -encoders | grep -E 'h264_rkmpp|hevc_rkmpp'
+          "$PACKAGE_DIR/bin/ffmpeg" -hide_banner -demuxers | grep -E 'rtsp|rtp|sdp|mpegts'
+          "$PACKAGE_DIR/bin/ffmpeg" -hide_banner -muxers | grep -E 'rtsp|rtp|mpegts'
+          "$PACKAGE_DIR/bin/ffmpeg" -hide_banner -filters | grep -E 'overlay_rkrga|scale_rkrga|vpp_rkrga'
+
+      - name: Upload FFmpeg package
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ env.PACKAGE_DIR }}
+          if-no-files-found: error
+
+      - name: Upload configure log on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-config-log-${{ matrix.target }}
+          path: ffbuild/config.log
+          if-no-files-found: ignore
