@@ -22,6 +22,8 @@ env:
   MPP_BRANCH: jellyfin-mpp
   RGA_REPOSITORY: https://gitee.com/nyanmisaka/rga.git
   RGA_BRANCH: jellyfin-rga
+  ROCKCHIP_DEPS_CACHE_VERSION: v1
+  CCACHE_CACHE_VERSION: v1
 
 jobs:
   build:
@@ -60,6 +62,10 @@ jobs:
       DEPS_PREFIX: ${{ github.workspace }}/lib/${{ matrix.target }}
       INSTALL_PREFIX: ${{ github.workspace }}/dist/${{ matrix.target }}
       PACKAGE_DIR: ${{ github.workspace }}/artifact/${{ matrix.artifact }}
+      CCACHE_DIR: ${{ github.workspace }}/.ccache/${{ matrix.target }}
+      CCACHE_MAXSIZE: 750M
+      CCACHE_COMPILERCHECK: content
+      CCACHE_BASEDIR: ${{ github.workspace }}
       TARGET_CFLAGS: ${{ matrix.target_cflags }}
       TARGET_LDFLAGS: ${{ matrix.target_ldflags }}
 
@@ -76,6 +82,7 @@ jobs:
             build-essential \
             ca-certificates \
             binutils \
+            ccache \
             cmake \
             file \
             git \
@@ -87,12 +94,69 @@ jobs:
             yasm
           sudo apt-get install -y --no-install-recommends libdrm-dev
 
+      - name: Resolve Rockchip dependency revisions
+        id: rockchip_deps
+        run: |
+          set -euxo pipefail
+
+          mpp_sha=$(git ls-remote --exit-code "$MPP_REPOSITORY" "refs/heads/$MPP_BRANCH" | awk '{ print $1 }')
+          rga_sha=$(git ls-remote --exit-code "$RGA_REPOSITORY" "refs/heads/$RGA_BRANCH" | awk '{ print $1 }')
+
+          deps_cache_key=$(
+            {
+              printf 'cache_version=%s\n' "$ROCKCHIP_DEPS_CACHE_VERSION"
+              printf 'target=%s\n' '${{ matrix.target }}'
+              printf 'mpp_repository=%s\n' "$MPP_REPOSITORY"
+              printf 'mpp_branch=%s\n' "$MPP_BRANCH"
+              printf 'mpp_sha=%s\n' "$mpp_sha"
+              printf 'rga_repository=%s\n' "$RGA_REPOSITORY"
+              printf 'rga_branch=%s\n' "$RGA_BRANCH"
+              printf 'rga_sha=%s\n' "$rga_sha"
+              printf 'target_cflags=%s\n' "$TARGET_CFLAGS"
+              printf 'target_ldflags=%s\n' "$TARGET_LDFLAGS"
+            } | sha256sum | awk '{ print $1 }'
+          )
+
+          {
+            echo "mpp_sha=$mpp_sha"
+            echo "rga_sha=$rga_sha"
+            echo "cache_key=$deps_cache_key"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Restore Rockchip dependency cache
+        id: rockchip_deps_cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.DEPS_PREFIX }}
+          key: rockchip-deps-${{ matrix.runner }}-${{ matrix.target }}-${{ steps.rockchip_deps.outputs.cache_key }}
+
+      - name: Restore compiler cache
+        id: ccache_cache
+        uses: actions/cache/restore@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-${{ matrix.runner }}-${{ matrix.target }}-${{ env.CCACHE_CACHE_VERSION }}-${{ github.sha }}
+          restore-keys: |
+            ccache-${{ matrix.runner }}-${{ matrix.target }}-${{ env.CCACHE_CACHE_VERSION }}-
+
+      - name: Configure compiler cache
+        run: |
+          set -euxo pipefail
+
+          mkdir -p "$CCACHE_DIR"
+          ccache --set-config=max_size="$CCACHE_MAXSIZE"
+          ccache --set-config=compiler_check="$CCACHE_COMPILERCHECK"
+          ccache --zero-stats
+          ccache --show-config
+
       - name: Build and install MPP
+        if: steps.rockchip_deps_cache.outputs.cache-hit != 'true'
         run: |
           set -euxo pipefail
 
           mkdir -p "$BUILD_ROOT" "$DEPS_PREFIX"
           git clone --depth=1 --branch "$MPP_BRANCH" "$MPP_REPOSITORY" "$BUILD_ROOT/rkmpp"
+          test "$(git -C "$BUILD_ROOT/rkmpp" rev-parse HEAD)" = "${{ steps.rockchip_deps.outputs.mpp_sha }}"
 
           cmake_args=(
             -DCMAKE_INSTALL_PREFIX="$DEPS_PREFIX"
@@ -100,6 +164,8 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release
             -DCMAKE_C_FLAGS_RELEASE="$TARGET_CFLAGS -DNDEBUG"
             -DCMAKE_CXX_FLAGS_RELEASE="$TARGET_CFLAGS -DNDEBUG"
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
             -DBUILD_SHARED_LIBS=ON
             -DBUILD_TEST=OFF
           )
@@ -109,11 +175,15 @@ jobs:
           cmake --install "$BUILD_ROOT/rkmpp-build"
 
       - name: Build and install RGA
+        if: steps.rockchip_deps_cache.outputs.cache-hit != 'true'
         run: |
           set -euxo pipefail
 
           git clone --depth=1 --branch "$RGA_BRANCH" "$RGA_REPOSITORY" "$BUILD_ROOT/rkrga"
+          test "$(git -C "$BUILD_ROOT/rkrga" rev-parse HEAD)" = "${{ steps.rockchip_deps.outputs.rga_sha }}"
 
+          export CC="ccache gcc"
+          export CXX="ccache g++"
           export CFLAGS="$TARGET_CFLAGS"
           export CXXFLAGS="$TARGET_CFLAGS -fpermissive"
           export LDFLAGS="$TARGET_LDFLAGS"
@@ -130,6 +200,13 @@ jobs:
           meson setup "$BUILD_ROOT/rkrga" "$BUILD_ROOT/rkrga-build" "${meson_args[@]}"
           meson compile -C "$BUILD_ROOT/rkrga-build"
           meson install -C "$BUILD_ROOT/rkrga-build"
+
+      - name: Save Rockchip dependency cache
+        if: steps.rockchip_deps_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.DEPS_PREFIX }}
+          key: ${{ steps.rockchip_deps_cache.outputs.cache-primary-key }}
 
       - name: Show Rockchip dependency metadata
         run: |
@@ -159,6 +236,9 @@ jobs:
             --enable-gpl
             --enable-version3
             --enable-lto=auto
+            "--cc=ccache gcc"
+            "--cxx=ccache g++"
+            "--host-cc=ccache gcc"
             --enable-libdrm
             --enable-rkmpp
             --enable-rkrga
@@ -350,6 +430,22 @@ jobs:
           "$PACKAGE_DIR/ffmpeg" -hide_banner -demuxers | grep -E 'rtsp|rtp|sdp|mpegts'
           "$PACKAGE_DIR/ffmpeg" -hide_banner -muxers | grep -E 'rtsp|rtp|mpegts'
           "$PACKAGE_DIR/ffmpeg" -hide_banner -filters | grep -E 'hwdownload|hwmap|hwupload|overlay_rkrga|scale_rkrga|vpp_rkrga'
+
+      - name: Show compiler cache stats
+        if: always()
+        run: |
+          set -euo pipefail
+
+          if command -v ccache >/dev/null 2>&1; then
+            ccache --show-stats || true
+          fi
+
+      - name: Save compiler cache
+        if: always() && steps.ccache_cache.outcome == 'success' && steps.ccache_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ${{ steps.ccache_cache.outputs.cache-primary-key }}
 
       - name: Upload FFmpeg package
         uses: actions/upload-artifact@v6
