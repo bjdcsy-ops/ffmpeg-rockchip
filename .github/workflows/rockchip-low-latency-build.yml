@@ -280,11 +280,12 @@ jobs:
 
           mkdir -p "$PACKAGE_DIR/lib"
           cp -a "$INSTALL_PREFIX/." "$PACKAGE_DIR/"
+          cp -a "$INSTALL_PREFIX/bin/ffmpeg" "$PACKAGE_DIR/ffmpeg"
+          cp -a "$INSTALL_PREFIX/bin/ffprobe" "$PACKAGE_DIR/ffprobe"
+          rm -rf "$PACKAGE_DIR/bin"
 
           shopt -s nullglob
           cp -a "$DEPS_PREFIX"/lib/*.so* "$PACKAGE_DIR/lib/"
-          cp -a "$PACKAGE_DIR/bin/ffmpeg" "$PACKAGE_DIR/ffmpeg"
-          cp -a "$PACKAGE_DIR/bin/ffprobe" "$PACKAGE_DIR/ffprobe"
 
           {
             echo "target=${{ matrix.target }}"
@@ -303,21 +304,21 @@ jobs:
           MPP and RGA are packaged under lib/. FFmpeg is intentionally
           component-pruned for RTSP/RTP, H.264/HEVC rkmpp codecs, and RGA
           filters instead of full general-purpose codec coverage.
-          Run ./ffmpeg from this directory or ./bin/ffmpeg from bin/ so the
-          embedded runtime path can resolve the bundled lib/ directory.
+          Run ./ffmpeg from this directory so the embedded runtime path can
+          resolve the bundled lib/ directory.
 
           Smoke checks:
-            ./bin/ffmpeg -decoders | grep rkmpp
-            ./bin/ffmpeg -encoders | grep rkmpp
-            ./bin/ffmpeg -filters | grep rkrga
+            ./ffmpeg -decoders | grep rkmpp
+            ./ffmpeg -encoders | grep rkmpp
+            ./ffmpeg -filters | grep rkrga
           EOF
 
       - name: Verify native package
         run: |
           set -euxo pipefail
 
-          file "$PACKAGE_DIR/bin/ffmpeg"
-          readelf -d "$PACKAGE_DIR/bin/ffmpeg" | grep -F '$ORIGIN/../lib:$ORIGIN/lib'
+          test ! -e "$PACKAGE_DIR/bin"
+          file "$PACKAGE_DIR/ffmpeg"
           readelf -d "$PACKAGE_DIR/ffmpeg" | grep -F '$ORIGIN/../lib:$ORIGIN/lib'
           verify_bundled_library() {
             local ldd_output=$1
@@ -341,17 +342,14 @@ jobs:
             esac
           }
 
-          env -u LD_LIBRARY_PATH ldd "$PACKAGE_DIR/bin/ffmpeg" | tee "$BUILD_ROOT/ldd-bin.txt"
-          verify_bundled_library "$BUILD_ROOT/ldd-bin.txt" librga.so.2
-          verify_bundled_library "$BUILD_ROOT/ldd-bin.txt" librockchip_mpp.so.1
           env -u LD_LIBRARY_PATH ldd "$PACKAGE_DIR/ffmpeg" | tee "$BUILD_ROOT/ldd-root.txt"
           verify_bundled_library "$BUILD_ROOT/ldd-root.txt" librga.so.2
           verify_bundled_library "$BUILD_ROOT/ldd-root.txt" librockchip_mpp.so.1
-          "$PACKAGE_DIR/bin/ffmpeg" -hide_banner -decoders | grep -E 'h264_rkmpp|hevc_rkmpp'
-          "$PACKAGE_DIR/bin/ffmpeg" -hide_banner -encoders | grep -E 'h264_rkmpp|hevc_rkmpp'
-          "$PACKAGE_DIR/bin/ffmpeg" -hide_banner -demuxers | grep -E 'rtsp|rtp|sdp|mpegts'
-          "$PACKAGE_DIR/bin/ffmpeg" -hide_banner -muxers | grep -E 'rtsp|rtp|mpegts'
-          "$PACKAGE_DIR/bin/ffmpeg" -hide_banner -filters | grep -E 'hwdownload|hwmap|hwupload|overlay_rkrga|scale_rkrga|vpp_rkrga'
+          "$PACKAGE_DIR/ffmpeg" -hide_banner -decoders | grep -E 'h264_rkmpp|hevc_rkmpp'
+          "$PACKAGE_DIR/ffmpeg" -hide_banner -encoders | grep -E 'h264_rkmpp|hevc_rkmpp'
+          "$PACKAGE_DIR/ffmpeg" -hide_banner -demuxers | grep -E 'rtsp|rtp|sdp|mpegts'
+          "$PACKAGE_DIR/ffmpeg" -hide_banner -muxers | grep -E 'rtsp|rtp|mpegts'
+          "$PACKAGE_DIR/ffmpeg" -hide_banner -filters | grep -E 'hwdownload|hwmap|hwupload|overlay_rkrga|scale_rkrga|vpp_rkrga'
 
       - name: Upload FFmpeg package
         uses: actions/upload-artifact@v6
