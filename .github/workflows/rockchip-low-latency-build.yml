@@ -200,7 +200,8 @@ jobs:
             --arch=${{ matrix.ffmpeg_arch }}
             --cpu=${{ matrix.ffmpeg_cpu }}
             --extra-cflags="-I$DEPS_PREFIX/include $TARGET_CFLAGS"
-            --extra-ldflags="-L$DEPS_PREFIX/lib -Wl,-rpath,\$ORIGIN/../lib $TARGET_LDFLAGS"
+            --extra-ldflags="-L$DEPS_PREFIX/lib $TARGET_LDFLAGS"
+            '--extra-ldexeflags=-Wl,-rpath,\$$ORIGIN/../lib'
           )
 
           ./configure "${configure_args[@]}"
