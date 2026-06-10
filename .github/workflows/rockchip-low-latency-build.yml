@@ -18,7 +18,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  MPP_REPOSITORY: https://gitee.com/nyanmisaka/mpp.git
+  MPP_REPOSITORY: https://github.com/nyanmisaka/mpp.git
   MPP_BRANCH: jellyfin-mpp
   RGA_REPOSITORY: https://gitee.com/nyanmisaka/rga.git
   RGA_BRANCH: jellyfin-rga
