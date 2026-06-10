@@ -201,10 +201,11 @@ jobs:
             --cpu=${{ matrix.ffmpeg_cpu }}
             --extra-cflags="-I$DEPS_PREFIX/include $TARGET_CFLAGS"
             --extra-ldflags="-L$DEPS_PREFIX/lib $TARGET_LDFLAGS"
-            '--extra-ldexeflags=-Wl,-rpath,\$$ORIGIN/../lib'
+            '--extra-ldexeflags=-Wl,-rpath,\\\$\$ORIGIN/../lib'
           )
 
           ./configure "${configure_args[@]}"
+          grep -F 'LDEXEFLAGS= -Wl,-rpath,\$$ORIGIN/../lib' ffbuild/config.mak
 
       - name: Build and install FFmpeg
         run: |
