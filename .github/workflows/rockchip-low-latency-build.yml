@@ -282,8 +282,11 @@ jobs:
             --enable-bsf=hevc_mp4toannexb
             --enable-decoder=h264_rkmpp
             --enable-decoder=hevc_rkmpp
+            --enable-decoder=pcm_mulaw
             --enable-encoder=h264_rkmpp
             --enable-encoder=hevc_rkmpp
+            --enable-encoder=pcm_mulaw
+            --enable-filter=aresample
             --enable-filter=hwdownload
             --enable-filter=hwmap
             --enable-filter=hwupload
