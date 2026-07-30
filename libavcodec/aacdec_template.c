@@ -454,6 +454,9 @@ static int output_configure(AACContext *ac,
     uint8_t id_map[TYPE_END][MAX_ELEM_ID] = {{ 0 }};
     uint8_t type_counts[TYPE_END] = { 0 };
 
+    if (get_new_frame && !ac->frame)
+        return AVERROR_INVALIDDATA;
+
     if (ac->oc[1].layout_map != layout_map) {
         memcpy(ac->oc[1].layout_map, layout_map, tags * sizeof(layout_map[0]));
         ac->oc[1].layout_map_tags = tags;
@@ -3311,6 +3314,12 @@ static int aac_decode_frame_int(AVCodecContext *avctx, AVFrame *frame,
         avctx->sample_rate = ac->oc[1].m4ac.sample_rate << multiplier;
         avctx->frame_size = samples;
         ac->oc[1].status = OC_LOCKED;
+    }
+
+    if (samples && avctx->sample_rate <= 0) {
+        av_log(avctx, AV_LOG_ERROR,
+               "Cannot output a frame without a valid sample rate\n");
+        return AVERROR_INVALIDDATA;
     }
 
     if (!ac->frame->data[0] && samples) {

@@ -834,7 +834,7 @@ static int vaapi_encode_output(AVCodecContext *avctx,
 
         if (pic->tail_size) {
             if (ctx->tail_pkt->size) {
-                err = AVERROR(AVERROR_BUG);
+                err = AVERROR_BUG;
                 goto end;
             }
 
@@ -2982,12 +2982,14 @@ av_cold int ff_vaapi_encode_close(AVCodecContext *avctx)
     av_buffer_pool_uninit(&ctx->output_buffer_pool);
 
     if (ctx->va_context != VA_INVALID_ID) {
-        vaDestroyContext(ctx->hwctx->display, ctx->va_context);
+        if (ctx->hwctx)
+            vaDestroyContext(ctx->hwctx->display, ctx->va_context);
         ctx->va_context = VA_INVALID_ID;
     }
 
     if (ctx->va_config != VA_INVALID_ID) {
-        vaDestroyConfig(ctx->hwctx->display, ctx->va_config);
+        if (ctx->hwctx)
+            vaDestroyConfig(ctx->hwctx->display, ctx->va_config);
         ctx->va_config = VA_INVALID_ID;
     }
 

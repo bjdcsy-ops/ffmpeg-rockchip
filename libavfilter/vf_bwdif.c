@@ -34,6 +34,7 @@
 #include "avfilter.h"
 #include "bwdifdsp.h"
 #include "ccfifo.h"
+#include "filters.h"
 #include "internal.h"
 #include "yadif.h"
 
@@ -54,7 +55,7 @@ typedef struct ThreadData {
 // and the frame is a multiple of 4 high then filter_line will never be called
 static inline int job_start(const int jobnr, const int nb_jobs, const int h)
 {
-    return jobnr >= nb_jobs ? h : ((h * jobnr) / nb_jobs) & ~3;
+    return jobnr >= nb_jobs ? h : (ff_slice_pos(h, jobnr, nb_jobs)) & ~3;
 }
 
 static int filter_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
@@ -77,11 +78,20 @@ static int filter_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
             uint8_t *next = &yadif->next->data[td->plane][y * linesize];
             uint8_t *dst  = &td->frame->data[td->plane][y * td->frame->linesize[td->plane]];
             if (yadif->current_field == YADIF_FIELD_END) {
-                s->dsp.filter_intra(dst, cur, td->w, (y + df) < td->h ? refs : -refs,
-                                y > (df - 1) ? -refs : refs,
-                                (y + 3*df) < td->h ? 3 * refs : -refs,
-                                y > (3*df - 1) ? -3 * refs : refs,
-                                td->parity ^ td->tff, clip_max);
+                if ((y < 3) || ((y + 3) >= td->h)) {
+                    s->dsp.filter_edge(dst, prev, cur, next, td->w,
+                                   (y + df) < td->h ? refs : -refs,
+                                   y > (df - 1) ? -refs : refs,
+                                   refs << 1, -(refs << 1),
+                                   td->parity ^ td->tff, clip_max,
+                                   (y < 2) || ((y + 3) > td->h) ? 0 : 1);
+                } else {
+                    s->dsp.filter_intra(dst, cur, td->w, (y + df) < td->h ? refs : -refs,
+                                    y > (df - 1) ? -refs : refs,
+                                    (y + 3*df) < td->h ? 3 * refs : -refs,
+                                    y > (3*df - 1) ? -3 * refs : refs,
+                                    td->parity ^ td->tff, clip_max);
+                }
             } else if ((y < 4) || ((y + 5) > td->h)) {
                 s->dsp.filter_edge(dst, prev, cur, next, td->w,
                                (y + df) < td->h ? refs : -refs,
@@ -191,13 +201,14 @@ static int config_props(AVFilterLink *link)
         return ret;
     }
 
-    if (link->w < 3 || link->h < 4) {
-        av_log(ctx, AV_LOG_ERROR, "Video of less than 3 columns or 4 lines is not supported\n");
+    yadif->csp = av_pix_fmt_desc_get(link->format);
+    yadif->filter = filter;
+
+    if (AV_CEIL_RSHIFT(link->w, yadif->csp->log2_chroma_w) < 3 || AV_CEIL_RSHIFT(link->h, yadif->csp->log2_chroma_h) < 4) {
+        av_log(ctx, AV_LOG_ERROR, "Video with planes less than 3 columns or 4 lines is not supported\n");
         return AVERROR(EINVAL);
     }
 
-    yadif->csp = av_pix_fmt_desc_get(link->format);
-    yadif->filter = filter;
     ff_bwdif_init_filter_line(&s->dsp, yadif->csp->comp[0].depth);
 
     return 0;

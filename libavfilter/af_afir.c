@@ -25,6 +25,7 @@
 
 #include <float.h>
 
+#include "libavutil/avassert.h"
 #include "libavutil/cpu.h"
 #include "libavutil/tx.h"
 #include "libavutil/avstring.h"
@@ -174,8 +175,8 @@ static int fir_channel(AVFilterContext *ctx, AVFrame *out, int ch)
 static int fir_channels(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
 {
     AVFrame *out = arg;
-    const int start = (out->ch_layout.nb_channels * jobnr) / nb_jobs;
-    const int end = (out->ch_layout.nb_channels * (jobnr+1)) / nb_jobs;
+    const int start = ff_slice_pos(out->ch_layout.nb_channels, jobnr, nb_jobs);
+    const int end = ff_slice_pos(out->ch_layout.nb_channels, jobnr + 1, nb_jobs);
 
     for (int ch = start; ch < end; ch++)
         fir_channel(ctx, out, ch);
@@ -247,6 +248,8 @@ static int init_segment(AVFilterContext *ctx, AudioFIRSegment *seg, int selir,
         iscale.d = 1.0 / sqrt(2.0 * part_size);
         tx_type  = AV_TX_DOUBLE_RDFT;
         break;
+    default:
+        av_assert1(0);
     }
 
     for (int ch = 0; ch < ctx->inputs[0]->ch_layout.nb_channels && part_size >= 1; ch++) {

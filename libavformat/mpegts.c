@@ -172,6 +172,7 @@ struct MpegTSContext {
     /* scan context */
     /** structure to keep track of Program->pids mapping */
     unsigned int nb_prg;
+    unsigned int prg_size; ///< allocated size of prg in bytes
     struct Program *prg;
 
     int8_t crc_validity[NB_PID_MAX];
@@ -313,17 +314,26 @@ static void clear_programs(MpegTSContext *ts)
 {
     av_freep(&ts->prg);
     ts->nb_prg = 0;
+    ts->prg_size = 0;
 }
 
 static struct Program * add_program(MpegTSContext *ts, unsigned int programid)
 {
     struct Program *p = get_program(ts, programid);
+    struct Program *tmp = NULL;
+    size_t new_prg_size;
     if (p)
         return p;
-    if (av_reallocp_array(&ts->prg, ts->nb_prg + 1, sizeof(*ts->prg)) < 0) {
-        ts->nb_prg = 0;
+
+    if (!av_size_mult(ts->nb_prg + 1,  sizeof(*ts->prg), &new_prg_size))
+        tmp = av_fast_realloc(ts->prg, &ts->prg_size,new_prg_size);
+    if (!tmp) {
+        av_freep(&ts->prg);
+        ts->nb_prg   = 0;
+        ts->prg_size = 0;
         return NULL;
     }
+    ts->prg = tmp;
     p = &ts->prg[ts->nb_prg];
     p->id = programid;
     clear_program(p);
@@ -1306,8 +1316,11 @@ skip:
                     p += sl_header_bytes;
                     buf_size -= sl_header_bytes;
                 }
-                if (pes->st->codecpar->codec_id == AV_CODEC_ID_SMPTE_KLV && buf_size >= 5) {
-                    /* skip metadata access unit header */
+                if (pes->stream_type == STREAM_TYPE_METADATA &&
+                    pes->stream_id == STREAM_ID_METADATA_STREAM &&
+                    pes->st->codecpar->codec_id == AV_CODEC_ID_SMPTE_KLV &&
+                    buf_size >= 5) {
+                    /* skip metadata access unit header - see MISB ST 1402 */
                     pes->pes_header_size += 5;
                     p += 5;
                     buf_size -= 5;
@@ -1670,13 +1683,15 @@ static int mp4_read_iods(AVFormatContext *s, const uint8_t *buf, unsigned size,
     MP4DescrParseContext d;
     int ret;
 
+    d.predefined_SLConfigDescriptor_seen = 0;
+
     ret = init_MP4DescrParseContext(&d, s, buf, size, descr, max_descr_count);
     if (ret < 0)
         return ret;
 
     ret = parse_mp4_descr(&d, avio_tell(&d.pb.pub), size, MP4IODescrTag);
 
-    *descr_count = d.descr_count;
+    *descr_count += d.descr_count;
     return ret;
 }
 
@@ -2187,7 +2202,7 @@ int ff_parse_mpeg2_descriptor(AVFormatContext *fc, AVStream *st, int stream_type
             uint32_t buf;
             AVDOVIDecoderConfigurationRecord *dovi;
             size_t dovi_size;
-            int dependency_pid;
+            int dependency_pid = -1; // Unset
 
             if (desc_end - *pp < 4) // (8 + 8 + 7 + 6 + 1 + 1 + 1) / 8
                 return AVERROR_INVALIDDATA;
@@ -2375,7 +2390,8 @@ static void pmt_cb(MpegTSFilter *filter, const uint8_t *section, int section_len
     av_log(ts->stream, AV_LOG_TRACE, "pcr_pid=0x%x\n", pcr_pid);
 
     program_info_length = get16(&p, p_end);
-    if (program_info_length < 0)
+
+    if (program_info_length < 0 || (program_info_length & 0xFFF) > p_end - p)
         return;
     program_info_length &= 0xfff;
     while (program_info_length >= 2) {
@@ -2390,12 +2406,12 @@ static void pmt_cb(MpegTSFilter *filter, const uint8_t *section, int section_len
             // something else is broken, exit the program_descriptors_loop
             break;
         program_info_length -= len;
-        if (tag == IOD_DESCRIPTOR) {
+        if (tag == IOD_DESCRIPTOR && len >= 2) {
             get8(&p, p_end); // scope
             get8(&p, p_end); // label
             len -= 2;
             mp4_read_iods(ts->stream, p, len, mp4_descr + mp4_descr_count,
-                          &mp4_descr_count, MAX_MP4_DESCR_COUNT);
+                          &mp4_descr_count, MAX_MP4_DESCR_COUNT - mp4_descr_count);
         } else if (tag == REGISTRATION_DESCRIPTOR && len >= 4) {
             prog_reg_desc = bytestream_get_le32(&p);
             len -= 4;
@@ -2601,7 +2617,8 @@ static void pat_cb(MpegTSFilter *filter, const uint8_t *section, int section_len
                     FFSWAP(struct Program, ts->prg[nb_prg], ts->prg[prg_idx]);
                 if (prg_idx >= nb_prg)
                     nb_prg++;
-            }
+            } else
+                nb_prg = 0;
         }
     }
     ts->nb_prg = nb_prg;

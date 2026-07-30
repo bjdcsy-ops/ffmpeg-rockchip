@@ -418,8 +418,11 @@ static void write_codec_attr(AVStream *st, VariantStream *vs)
     } else if (st->codecpar->codec_id == AV_CODEC_ID_MP3) {
         snprintf(attr, sizeof(attr), "mp4a.40.34");
     } else if (st->codecpar->codec_id == AV_CODEC_ID_AAC) {
-        /* TODO : For HE-AAC, HE-AACv2, the last digit needs to be set to 5 and 29 respectively */
-        snprintf(attr, sizeof(attr), "mp4a.40.2");
+        if (st->codecpar->profile != AV_PROFILE_UNKNOWN)
+            snprintf(attr, sizeof(attr), "mp4a.40.%d", st->codecpar->profile+1);
+        else
+            // This is for backward compatibility with the previous implementation.
+            snprintf(attr, sizeof(attr), "mp4a.40.2");
     } else if (st->codecpar->codec_id == AV_CODEC_ID_AC3) {
         snprintf(attr, sizeof(attr), "ac-3");
     } else if (st->codecpar->codec_id == AV_CODEC_ID_EAC3) {
@@ -774,7 +777,7 @@ static int do_encrypt(AVFormatContext *s, VariantStream *vs)
             return ret;
         avio_seek(pb, 0, SEEK_CUR);
         avio_write(pb, key, KEYSIZE);
-        avio_close(pb);
+        ff_format_io_close(s, &pb);
     }
     return 0;
 }
@@ -1203,9 +1206,7 @@ static int parse_playlist(AVFormatContext *s, const char *url, VariantStream *vs
     const char *end;
     double discont_program_date_time = 0;
 
-    if ((ret = ffio_open_whitelist(&in, url, AVIO_FLAG_READ,
-                                   &s->interrupt_callback, NULL,
-                                   s->protocol_whitelist, s->protocol_blacklist)) < 0)
+    if ((ret = s->io_open(s, &in, url, AVIO_FLAG_READ, NULL)) < 0)
         return ret;
 
     ff_get_chomp_line(in, line, sizeof(line));
@@ -1301,7 +1302,7 @@ static int parse_playlist(AVFormatContext *s, const char *url, VariantStream *vs
     }
 
 fail:
-    avio_close(in);
+    ff_format_io_close(s, &in);
     return ret;
 }
 
@@ -2413,7 +2414,6 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
     int is_ref_pkt = 1;
     int ret = 0, can_split = 1, i, j;
     int stream_index = 0;
-    int subtitle_streams = 0;
     int range_length = 0;
     const char *proto = NULL;
     int use_temp_file = 0;
@@ -2421,6 +2421,7 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
     char *old_filename = NULL;
 
     for (i = 0; i < hls->nb_varstreams; i++) {
+        int subtitle_streams = 0;
         vs = &hls->var_streams[i];
         for (j = 0; j < vs->nb_streams; j++) {
             if (vs->streams[j]->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
@@ -2587,8 +2588,10 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
                            " will retry with a new http session.\n");
                     ff_format_io_close(s, &vs->out);
                     ret = hlsenc_io_open(s, &vs->out, filename, &options);
-                    reflush_dynbuf(vs, &range_length);
-                    ret = hlsenc_io_close(s, &vs->out, filename);
+                    if (ret >= 0) {
+                        reflush_dynbuf(vs, &range_length);
+                        ret = hlsenc_io_close(s, &vs->out, filename);
+                    }
                 }
                 av_dict_free(&options);
                 av_freep(&vs->temp_buffer);
@@ -2598,6 +2601,9 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
             if (use_temp_file)
                 hls_rename_temp_file(s, oc);
         }
+
+        if (ret < 0)
+            return ret;
 
         old_filename = av_strdup(oc->url);
         if (!old_filename) {

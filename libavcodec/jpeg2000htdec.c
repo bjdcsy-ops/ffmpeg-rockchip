@@ -567,10 +567,18 @@ static int jpeg2000_decode_ht_cleanup_segment(const Jpeg2000DecoderContext *s,
 
     uint64_t c;
 
-    uint8_t *sigma;
-    uint32_t *mu;
+    uint8_t *sigma, *sigma_n, *E;
+    uint32_t *mu, *mu_n;
 
     const uint8_t *vlc_buf = Dcup + Pcup;
+
+    /*
+     * Bound on the precision needed to process the codeblock. The number of
+     * decoded bit planes is equal to at most cblk->zbp + 2 since S_blk = P if
+     * there are no placeholder passes or HT Sets and P = cblk->zbp. See Rec.
+     * ITU-T T.814, 7.6.
+     */
+    int maxbp = cblk->zbp + 2;
 
     /* convert to raster-scan */
     const uint16_t is_border_x = width % 2;
@@ -581,9 +589,13 @@ static int jpeg2000_decode_ht_cleanup_segment(const Jpeg2000DecoderContext *s,
 
     size_t buf_size = 4 * quad_width * quad_height;
 
-    uint8_t *sigma_n = av_calloc(buf_size, sizeof(uint8_t));
-    uint8_t *E       = av_calloc(buf_size, sizeof(uint8_t));
-    uint32_t *mu_n   = av_calloc(buf_size, sizeof(uint32_t));
+    /* do we have enough precision, assuming a 32-bit decoding path */
+    if (maxbp >= 32)
+        return AVERROR_INVALIDDATA;
+
+    sigma_n = av_calloc(buf_size, sizeof(uint8_t));
+    E       = av_calloc(buf_size, sizeof(uint8_t));
+    mu_n    = av_calloc(buf_size, sizeof(uint32_t));
 
     if (!sigma_n || !E || !mu_n) {
         ret = AVERROR(ENOMEM);
@@ -676,6 +688,10 @@ static int jpeg2000_decode_ht_cleanup_segment(const Jpeg2000DecoderContext *s,
         }
         U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
         U[J2K_Q2] = kappa[J2K_Q2] + u[J2K_Q2];
+        if (U[J2K_Q1] > maxbp || U[J2K_Q2] > maxbp) {
+            ret = AVERROR_INVALIDDATA;
+            goto free;
+        }
 
         for (int i = 0; i < 4; i++) {
             m[J2K_Q1][i] = sigma_n[4 * q1 + i] * U[J2K_Q1] - ((emb_pat_k[J2K_Q1] >> i) & 1);
@@ -713,6 +729,10 @@ static int jpeg2000_decode_ht_cleanup_segment(const Jpeg2000DecoderContext *s,
         }
 
         U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
+        if (U[J2K_Q1] > maxbp) {
+            ret = AVERROR_INVALIDDATA;
+            goto free;
+        }
 
         for (int i = 0; i < 4; i++)
             m[J2K_Q1][i] = sigma_n[4 * q1 + i] * U[J2K_Q1] - ((emb_pat_k[J2K_Q1] >> i) & 1);
@@ -842,6 +862,10 @@ static int jpeg2000_decode_ht_cleanup_segment(const Jpeg2000DecoderContext *s,
 
             U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
             U[J2K_Q2] = kappa[J2K_Q2] + u[J2K_Q2];
+            if (U[J2K_Q1] > maxbp || U[J2K_Q2] > maxbp) {
+                ret = AVERROR_INVALIDDATA;
+                goto free;
+            }
 
             for (int i = 0; i < 4; i++) {
                 m[J2K_Q1][i] = sigma_n[4 * q1 + i] * U[J2K_Q1] - ((emb_pat_k[J2K_Q1] >> i) & 1);
@@ -910,6 +934,10 @@ static int jpeg2000_decode_ht_cleanup_segment(const Jpeg2000DecoderContext *s,
             kappa[J2K_Q1] = FFMAX(1, gamma[J2K_Q1] * (max_e[J2K_Q1] - 1));
 
             U[J2K_Q1] = kappa[J2K_Q1] + u[J2K_Q1];
+            if (U[J2K_Q1] > maxbp) {
+                ret = AVERROR_INVALIDDATA;
+                goto free;
+            }
 
             for (int i = 0; i < 4; i++)
                 m[J2K_Q1][i] = sigma_n[4 * q1 + i] * U[J2K_Q1] - ((emb_pat_k[J2K_Q1] >> i) & 1);
@@ -1170,6 +1198,9 @@ ff_jpeg2000_decode_htj2k(const Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c
     av_assert0(width * height <= 4096);
     av_assert0(width * height > 0);
 
+    if (roi_shift)
+        avpriv_report_missing_feature(s->avctx, "ROI shift");
+
     memset(t1->data, 0, t1->stride * height * sizeof(*t1->data));
     memset(t1->flags, 0, t1->stride * (height + 2) * sizeof(*t1->flags));
 
@@ -1195,10 +1226,20 @@ ff_jpeg2000_decode_htj2k(const Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c
                "Cleanup pass length must be at least 2 bytes in length\n");
         return AVERROR_INVALIDDATA;
     }
+    // this might arise either if the codestream is corrupted; or contains multiple HT Sets
+    // (see Rec. ITU-T T.814, Annex B.1), which the parser does not currently support
+    if (Lcup + Lref != cblk->length)
+        return AVERROR_INVALIDDATA;
+
     Dcup = cblk->data;
     Dref  = cblk->data + Lcup; // Dref comes after the refinement segment
     S_blk = p0 + cblk->zbp;
     pLSB  = 30 - S_blk;
+
+    if (pLSB <= 1 || pLSB >= 31) {
+        avpriv_request_sample(s->avctx, "pLSB %d", pLSB);
+        return AVERROR_PATCHWELCOME;
+    }
 
     Scup = (Dcup[Lcup - 1] << 4) + (Dcup[Lcup - 2] & 0x0F);
 
@@ -1238,8 +1279,10 @@ ff_jpeg2000_decode_htj2k(const Jpeg2000DecoderContext *s, Jpeg2000CodingStyle *c
     }
     if ((ret = jpeg2000_decode_ht_cleanup_segment(s, cblk, t1, &mel_state, &mel, &vlc,
                                           &mag_sgn, Dcup, Lcup, Pcup, pLSB, width,
-                                          height, sample_buf, block_states)) < 0)
+                                          height, sample_buf, block_states)) < 0) {
+        av_log(s->avctx, AV_LOG_ERROR, "Bad HT cleanup segment\n");
         goto free;
+    }
 
     if (cblk->npasses > 1)
         jpeg2000_decode_sigprop_segment(cblk, width, height, Dref, Lref,

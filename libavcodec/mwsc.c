@@ -50,6 +50,10 @@ static int rle_uncompress(GetByteContext *gb, PutByteContext *pb, GetByteContext
 
         if (run == 0) {
             run = bytestream2_get_le32(gb);
+
+            if (bytestream2_tell_p(pb) + width - w < run)
+                return AVERROR_INVALIDDATA;
+
             for (int j = 0; j < run; j++, w++) {
                 if (w == width) {
                     w = 0;
@@ -60,7 +64,14 @@ static int rle_uncompress(GetByteContext *gb, PutByteContext *pb, GetByteContext
         } else if (run == 255) {
             int pos = bytestream2_tell_p(pb);
 
+            if (!gbp)
+                return AVERROR_INVALIDDATA;
+
             bytestream2_seek(gbp, pos, SEEK_SET);
+
+            if (pos + width - w < fill)
+                return AVERROR_INVALIDDATA;
+
             for (int j = 0; j < fill; j++, w++) {
                 if (w == width) {
                     w = 0;
@@ -72,6 +83,9 @@ static int rle_uncompress(GetByteContext *gb, PutByteContext *pb, GetByteContext
 
             intra = 0;
         } else {
+            if (bytestream2_tell_p(pb) + width - w < run)
+                return AVERROR_INVALIDDATA;
+
             for (int j = 0; j < run; j++, w++) {
                 if (w == width) {
                     w = 0;
@@ -116,11 +130,16 @@ static int decode_frame(AVCodecContext *avctx, AVFrame *frame,
         return ret;
 
     bytestream2_init(&gb, s->decomp_buf, zstream->total_out);
-    bytestream2_init(&gbp, s->prev_frame->data[0], avctx->height * s->prev_frame->linesize[0]);
+    if (s->prev_frame->data[0])
+        bytestream2_init(&gbp, s->prev_frame->data[0], avctx->height * s->prev_frame->linesize[0]);
     bytestream2_init_writer(&pb, frame->data[0], avctx->height * frame->linesize[0]);
 
-    if (rle_uncompress(&gb, &pb, &gbp, avctx->width, avctx->height, avctx->width * 3,
-                       frame->linesize[0], s->prev_frame->linesize[0]))
+    ret = rle_uncompress(&gb, &pb, s->prev_frame->data[0] ? &gbp : NULL,
+                         avctx->width, avctx->height, avctx->width * 3,
+                         frame->linesize[0], s->prev_frame->linesize[0]);
+    if (ret < 0)
+        return ret;
+    if (ret)
         frame->flags |= AV_FRAME_FLAG_KEY;
     else
         frame->flags &= ~AV_FRAME_FLAG_KEY;

@@ -337,9 +337,9 @@ static int alloc_buffers(DiracContext *s, int stride)
     av_freep(&s->mctmp);
     av_freep(&s->mcscratch);
 
-    s->edge_emu_buffer_base = av_malloc_array(stride, MAX_BLOCKSIZE);
+    s->edge_emu_buffer_base = av_malloc_array(stride, 4 * MAX_BLOCKSIZE);
 
-    s->mctmp     = av_malloc_array((stride+MAX_BLOCKSIZE), (h+MAX_BLOCKSIZE) * sizeof(*s->mctmp));
+    s->mctmp     = av_malloc_array((stride+MAX_BLOCKSIZE), (h + 5*MAX_BLOCKSIZE) * sizeof(*s->mctmp));
     s->mcscratch = av_malloc_array(stride, MAX_BLOCKSIZE);
 
     if (!s->edge_emu_buffer_base || !s->mctmp || !s->mcscratch)
@@ -1894,7 +1894,7 @@ static int dirac_decode_frame_internal(DiracContext *s)
 
         /* FIXME: small resolutions */
         for (i = 0; i < 4; i++)
-            s->edge_emu_buffer[i] = s->edge_emu_buffer_base + i*FFALIGN(p->width, 16);
+            s->edge_emu_buffer[i] = s->edge_emu_buffer_base + i*s->buffer_stride*MAX_BLOCKSIZE;
 
         if (!s->zero_res && !s->low_delay)
         {
@@ -1943,7 +1943,7 @@ static int dirac_decode_frame_internal(DiracContext *s)
                     h = p->height - start;
                 else
                     h = p->ybsep - (start - dsty);
-                if (h < 0)
+                if (h <= 0)
                     break;
 
                 memset(mctmp+2*p->yoffset*p->stride, 0, 2*rowheight);

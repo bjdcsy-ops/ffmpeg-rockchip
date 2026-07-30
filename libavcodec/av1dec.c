@@ -96,12 +96,11 @@ static int32_t decode_signed_subexp_with_ref(uint32_t sub_exp, int low,
 
 static void read_global_param(AV1DecContext *s, int type, int ref, int idx)
 {
-    uint8_t primary_frame, prev_frame;
+    int primary_frame;
     uint32_t abs_bits, prec_bits, round, prec_diff, sub, mx;
     int32_t r, prev_gm_param;
 
     primary_frame = s->raw_frame_header->primary_ref_frame;
-    prev_frame = s->raw_frame_header->ref_frame_idx[primary_frame];
     abs_bits = AV1_GM_ABS_ALPHA_BITS;
     prec_bits = AV1_GM_ALPHA_PREC_BITS;
 
@@ -111,8 +110,10 @@ static void read_global_param(AV1DecContext *s, int type, int ref, int idx)
      */
     if (s->raw_frame_header->primary_ref_frame == AV1_PRIMARY_REF_NONE)
         prev_gm_param = s->cur_frame.gm_params[ref][idx];
-    else
+    else {
+        int prev_frame = s->raw_frame_header->ref_frame_idx[primary_frame];
         prev_gm_param = s->ref[prev_frame].gm_params[ref][idx];
+    }
 
     if (idx < 2) {
         if (type == AV1_WARP_MODEL_TRANSLATION) {
@@ -177,7 +178,7 @@ static uint8_t get_shear_params_valid(AV1DecContext *s, int idx)
     int16_t alpha, beta, gamma, delta, divf, divs;
     int64_t v, w;
     int32_t *param = &s->cur_frame.gm_params[idx][0];
-    if (param[2] < 0)
+    if (param[2] <= 0)
         return 0;
 
     alpha = av_clip_int16(param[2] - (1 << AV1_WARPEDMODEL_PREC_BITS));
@@ -279,6 +280,8 @@ static void skip_mode_params(AV1DecContext *s)
     forward_idx  = -1;
     backward_idx = -1;
     for (i = 0; i < AV1_REFS_PER_FRAME; i++) {
+        if (!s->ref[header->ref_frame_idx[i]].raw_frame_header)
+            return;
         ref_hint = s->ref[header->ref_frame_idx[i]].raw_frame_header->order_hint;
         dist = get_relative_dist(seq, ref_hint, header->order_hint);
         if (dist < 0) {
@@ -443,7 +446,7 @@ static int get_tiles_info(AVCodecContext *avctx, const AV1RawTileGroup *tile_gro
 static enum AVPixelFormat get_sw_pixel_format(void *logctx,
                                               const AV1RawSequenceHeader *seq)
 {
-    uint8_t bit_depth;
+    int bit_depth;
     enum AVPixelFormat pix_fmt = AV_PIX_FMT_NONE;
 
     if (seq->seq_profile == 2 && seq->color_config.high_bitdepth)
@@ -467,7 +470,7 @@ static enum AVPixelFormat get_sw_pixel_format(void *logctx,
             else if (bit_depth == 12)
                 pix_fmt = AV_PIX_FMT_YUV444P12;
             else
-                av_log(logctx, AV_LOG_WARNING, "Unknown AV1 pixel format.\n");
+                av_assert0(0);
         } else if (seq->color_config.subsampling_x == 1 &&
                    seq->color_config.subsampling_y == 0) {
             if (bit_depth == 8)
@@ -477,7 +480,7 @@ static enum AVPixelFormat get_sw_pixel_format(void *logctx,
             else if (bit_depth == 12)
                 pix_fmt = AV_PIX_FMT_YUV422P12;
             else
-                av_log(logctx, AV_LOG_WARNING, "Unknown AV1 pixel format.\n");
+                av_assert0(0);
         } else if (seq->color_config.subsampling_x == 1 &&
                    seq->color_config.subsampling_y == 1) {
             if (bit_depth == 8)
@@ -487,7 +490,7 @@ static enum AVPixelFormat get_sw_pixel_format(void *logctx,
             else if (bit_depth == 12)
                 pix_fmt = AV_PIX_FMT_YUV420P12;
             else
-                av_log(logctx, AV_LOG_WARNING, "Unknown AV1 pixel format.\n");
+                av_assert0(0);
         }
     } else {
         if (bit_depth == 8)
@@ -497,7 +500,7 @@ static enum AVPixelFormat get_sw_pixel_format(void *logctx,
         else if (bit_depth == 12)
             pix_fmt = AV_PIX_FMT_GRAY12;
         else
-            av_log(logctx, AV_LOG_WARNING, "Unknown AV1 pixel format.\n");
+            av_assert0(0);
     }
 
     return pix_fmt;
@@ -736,7 +739,7 @@ static int set_context_with_sequence(AVCodecContext *avctx,
     avctx->color_range =
         seq->color_config.color_range ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
     avctx->color_primaries = seq->color_config.color_primaries;
-    avctx->colorspace = seq->color_config.color_primaries;
+    avctx->colorspace = seq->color_config.matrix_coefficients;
     avctx->color_trc = seq->color_config.transfer_characteristics;
 
     switch (seq->color_config.chroma_sample_position) {
@@ -1204,6 +1207,8 @@ static int av1_receive_frame_internal(AVCodecContext *avctx, AVFrame *frame)
             ff_refstruct_replace(&s->seq_ref, unit->content_ref);
 
             s->raw_seq = &obu->obu.sequence_header;
+            s->raw_frame_header = NULL;
+            raw_tile_group      = NULL;
 
             ret = set_context_with_sequence(avctx, s->raw_seq);
             if (ret < 0) {
@@ -1247,6 +1252,8 @@ static int av1_receive_frame_internal(AVCodecContext *avctx, AVFrame *frame)
             }
 
             ff_refstruct_replace(&s->header_ref, unit->content_ref);
+
+            raw_tile_group      = NULL;
 
             if (unit->type == AV1_OBU_FRAME)
                 s->raw_frame_header = &obu->obu.frame.header;
@@ -1326,8 +1333,11 @@ static int av1_receive_frame_internal(AVCodecContext *avctx, AVFrame *frame)
                 }
             }
             break;
-        case AV1_OBU_TILE_LIST:
         case AV1_OBU_TEMPORAL_DELIMITER:
+            s->raw_frame_header = NULL;
+            raw_tile_group      = NULL;
+        // fall-through
+        case AV1_OBU_TILE_LIST:
         case AV1_OBU_PADDING:
             break;
         case AV1_OBU_METADATA:

@@ -22,6 +22,7 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
+#include "filters.h"
 #include "formats.h"
 #include "internal.h"
 #include "video.h"
@@ -32,6 +33,7 @@ typedef struct WeaveContext {
     int double_weave;
     int nb_planes;
     int planeheight[4];
+    int outheight[4];
     int linesize[4];
 
     AVFrame *prev;
@@ -81,6 +83,9 @@ static int config_props_output(AVFilterLink *outlink)
     s->planeheight[1] = s->planeheight[2] = AV_CEIL_RSHIFT(inlink->h, desc->log2_chroma_h);
     s->planeheight[0] = s->planeheight[3] = inlink->h;
 
+    s->outheight[1] = s->outheight[2] = AV_CEIL_RSHIFT(2*inlink->h, desc->log2_chroma_h);
+    s->outheight[0] = s->outheight[3] = 2*inlink->h;
+
     s->nb_planes = av_pix_fmt_count_planes(inlink->format);
 
     return 0;
@@ -104,21 +109,22 @@ static int weave_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
 
     for (int i = 0; i < s->nb_planes; i++) {
         const int height = s->planeheight[i];
-        const int start = (height * jobnr) / nb_jobs;
-        const int end = (height * (jobnr+1)) / nb_jobs;
+        const int start = ff_slice_pos(height, jobnr, nb_jobs);
+        const int end = ff_slice_pos(height, jobnr + 1, nb_jobs);
+        const int compensation = 2*end > s->outheight[i];
 
         av_image_copy_plane(out->data[i] + out->linesize[i] * field1 +
                             out->linesize[i] * start * 2,
                             out->linesize[i] * 2,
                             in->data[i] + start * in->linesize[i],
                             in->linesize[i],
-                            s->linesize[i], end - start);
+                            s->linesize[i], end - start - compensation * field1);
         av_image_copy_plane(out->data[i] + out->linesize[i] * field2 +
                             out->linesize[i] * start * 2,
                             out->linesize[i] * 2,
                             s->prev->data[i] + start * s->prev->linesize[i],
                             s->prev->linesize[i],
-                            s->linesize[i], end - start);
+                            s->linesize[i], end - start - compensation * field2);
     }
 
     return 0;
