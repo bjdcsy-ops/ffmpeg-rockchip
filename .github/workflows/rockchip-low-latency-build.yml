@@ -17,461 +17,73 @@ concurrency:
   group: rockchip-low-latency-${{ github.ref }}
   cancel-in-progress: true
 
-env:
-  MPP_REPOSITORY: https://github.com/nyanmisaka/mpp.git
-  MPP_BRANCH: jellyfin-mpp
-  RGA_REPOSITORY: https://github.com/nyanmisaka/rk-mirrors.git
-  RGA_BRANCH: jellyfin-rga
-  ROCKCHIP_DEPS_CACHE_VERSION: v1
-  CCACHE_CACHE_VERSION: v1
-
 jobs:
   build:
     name: ${{ matrix.target }} low-latency
-    runs-on: ${{ matrix.runner }}
+    runs-on: ubuntu-22.04-arm
     timeout-minutes: 150
 
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - target: rk3588
-            runner: ubuntu-22.04-arm
-            artifact: ffmpeg-rockchip-rk3588-ubuntu22-arm64
-            ffmpeg_arch: aarch64
-            ffmpeg_cpu: cortex-a76.cortex-a55
-            target_cflags: -O3 -pipe -mcpu=cortex-a76.cortex-a55 -mtune=cortex-a76.cortex-a55 -fno-semantic-interposition
-            target_ldflags: ""
-          - target: rk3576
-            runner: ubuntu-22.04-arm
-            artifact: ffmpeg-rockchip-rk3576-ubuntu22-arm64
-            ffmpeg_arch: aarch64
-            ffmpeg_cpu: cortex-a72.cortex-a53
-            target_cflags: -O3 -pipe -mcpu=cortex-a72.cortex-a53 -mtune=cortex-a72.cortex-a53 -fno-semantic-interposition
-            target_ldflags: ""
-          - target: rv1126b
-            runner: ubuntu-22.04-arm
-            artifact: ffmpeg-rockchip-rv1126b-ubuntu22-arm64
-            ffmpeg_arch: aarch64
-            ffmpeg_cpu: cortex-a53
-            target_cflags: -O3 -pipe -mcpu=cortex-a53 -mtune=cortex-a53 -fno-semantic-interposition
-            target_ldflags: ""
-
-    env:
-      BUILD_ROOT: ${{ github.workspace }}/.build/${{ matrix.target }}
-      DEPS_PREFIX: ${{ github.workspace }}/lib/${{ matrix.target }}
-      INSTALL_PREFIX: ${{ github.workspace }}/dist/${{ matrix.target }}
-      PACKAGE_DIR: ${{ github.workspace }}/artifact/${{ matrix.artifact }}
-      CCACHE_DIR: ${{ github.workspace }}/.ccache/${{ matrix.target }}
-      CCACHE_MAXSIZE: 750M
-      CCACHE_COMPILERCHECK: content
-      CCACHE_BASEDIR: ${{ github.workspace }}
-      GIT_TERMINAL_PROMPT: "0"
-      GIT_RETRY_ATTEMPTS: "5"
-      GIT_RETRY_INITIAL_DELAY_SECONDS: "10"
-      TARGET_CFLAGS: ${{ matrix.target_cflags }}
-      TARGET_LDFLAGS: ${{ matrix.target_ldflags }}
+        target:
+          - rk3588
+          - rk3576
+          - rv1126b
 
     steps:
       - name: Checkout FFmpeg
         uses: actions/checkout@v5
 
-      - name: Install build dependencies
-        run: |
-          set -euxo pipefail
-
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            build-essential \
-            ca-certificates \
-            binutils \
-            ccache \
-            cmake \
-            file \
-            git \
-            meson \
-            nasm \
-            ninja-build \
-            patchelf \
-            pkg-config \
-            yasm
-          sudo apt-get install -y --no-install-recommends libdrm-dev
+      - name: Resolve target metadata
+        id: target
+        run: build/rockchip/target-info.sh "${{ matrix.target }}" >> "$GITHUB_OUTPUT"
 
       - name: Resolve Rockchip dependency revisions
         id: rockchip_deps
-        run: |
-          set -euxo pipefail
-
-          source "$GITHUB_WORKSPACE/.github/scripts/ci-git-helpers.sh"
-
-          mpp_sha=$(git_branch_sha "$MPP_REPOSITORY" "$MPP_BRANCH")
-          rga_sha=$(git_branch_sha "$RGA_REPOSITORY" "$RGA_BRANCH")
-
-          mpp_sha_short=${mpp_sha:0:12}
-          rga_sha_short=${rga_sha:0:12}
-          flags_key=$(
-            {
-              printf 'target_cflags=%s\n' "$TARGET_CFLAGS"
-              printf 'target_ldflags=%s\n' "$TARGET_LDFLAGS"
-            } | sha256sum | cut -c1-12
-          )
-          deps_cache_key="${ROCKCHIP_DEPS_CACHE_VERSION}-mpp-${mpp_sha_short}-rga-${rga_sha_short}-flags-${flags_key}"
-          ccache_period=$(date -u +%G-W%V)
-
-          printf 'Rockchip dependency cache: rockchip-deps-%s-%s-%s\n' '${{ matrix.runner }}' '${{ matrix.target }}' "$deps_cache_key"
-          printf 'Compiler cache: ccache-%s-%s-%s-%s\n' '${{ matrix.runner }}' '${{ matrix.target }}' "$CCACHE_CACHE_VERSION" "$ccache_period"
-          printf 'MPP revision: %s (%s)\n' "$mpp_sha" "$MPP_BRANCH"
-          printf 'RGA revision: %s (%s)\n' "$rga_sha" "$RGA_BRANCH"
-
-          {
-            echo "mpp_sha=$mpp_sha"
-            echo "rga_sha=$rga_sha"
-            echo "cache_key=$deps_cache_key"
-            echo "ccache_period=$ccache_period"
-          } >> "$GITHUB_OUTPUT"
+        run: build/rockchip/resolve-dependencies.sh "${{ matrix.target }}" >> "$GITHUB_OUTPUT"
 
       - name: Restore Rockchip dependency cache
         id: rockchip_deps_cache
         uses: actions/cache/restore@v5
         with:
-          path: ${{ env.DEPS_PREFIX }}
-          key: rockchip-deps-${{ matrix.runner }}-${{ matrix.target }}-${{ steps.rockchip_deps.outputs.cache_key }}
+          path: .rockchip-cache/deps/${{ matrix.target }}/${{ steps.rockchip_deps.outputs.cache_key }}
+          key: rockchip-deps-ubuntu-22.04-arm-${{ matrix.target }}-${{ steps.rockchip_deps.outputs.cache_key }}
 
       - name: Restore compiler cache
         id: ccache_cache
         uses: actions/cache/restore@v5
         with:
-          path: ${{ env.CCACHE_DIR }}
-          key: ccache-${{ matrix.runner }}-${{ matrix.target }}-${{ env.CCACHE_CACHE_VERSION }}-${{ steps.rockchip_deps.outputs.ccache_period }}
+          path: .rockchip-cache/ccache/${{ matrix.target }}
+          key: ccache-ubuntu-22.04-arm-${{ matrix.target }}-${{ steps.rockchip_deps.outputs.ccache_cache_version }}-${{ steps.rockchip_deps.outputs.ccache_period }}
           restore-keys: |
-            ccache-${{ matrix.runner }}-${{ matrix.target }}-${{ env.CCACHE_CACHE_VERSION }}-
+            ccache-ubuntu-22.04-arm-${{ matrix.target }}-${{ steps.rockchip_deps.outputs.ccache_cache_version }}-
 
-      - name: Configure compiler cache
-        run: |
-          set -euxo pipefail
-
-          mkdir -p "$CCACHE_DIR"
-          ccache --set-config=max_size="$CCACHE_MAXSIZE"
-          ccache --set-config=compiler_check="$CCACHE_COMPILERCHECK"
-          ccache --zero-stats
-          ccache --show-config
-
-      - name: Build and install MPP
-        if: steps.rockchip_deps_cache.outputs.cache-hit != 'true'
-        run: |
-          set -euxo pipefail
-
-          source "$GITHUB_WORKSPACE/.github/scripts/ci-git-helpers.sh"
-
-          mkdir -p "$BUILD_ROOT" "$DEPS_PREFIX"
-          git_clone_branch_with_retry "$MPP_REPOSITORY" "$MPP_BRANCH" "$BUILD_ROOT/rkmpp"
-          git_verify_head "$BUILD_ROOT/rkmpp" "${{ steps.rockchip_deps.outputs.mpp_sha }}"
-
-          cmake_args=(
-            -DCMAKE_INSTALL_PREFIX="$DEPS_PREFIX"
-            -DCMAKE_INSTALL_LIBDIR=lib
-            -DCMAKE_BUILD_TYPE=Release
-            -DCMAKE_C_FLAGS_RELEASE="$TARGET_CFLAGS -DNDEBUG"
-            -DCMAKE_CXX_FLAGS_RELEASE="$TARGET_CFLAGS -DNDEBUG"
-            -DCMAKE_C_COMPILER_LAUNCHER=ccache
-            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-            -DBUILD_SHARED_LIBS=ON
-            -DBUILD_TEST=OFF
-          )
-
-          cmake -S "$BUILD_ROOT/rkmpp" -B "$BUILD_ROOT/rkmpp-build" "${cmake_args[@]}"
-          cmake --build "$BUILD_ROOT/rkmpp-build" --parallel "$(nproc)"
-          cmake --install "$BUILD_ROOT/rkmpp-build"
-
-      - name: Build and install RGA
-        if: steps.rockchip_deps_cache.outputs.cache-hit != 'true'
-        run: |
-          set -euxo pipefail
-
-          source "$GITHUB_WORKSPACE/.github/scripts/ci-git-helpers.sh"
-
-          git_clone_branch_with_retry "$RGA_REPOSITORY" "$RGA_BRANCH" "$BUILD_ROOT/rkrga"
-          git_verify_head "$BUILD_ROOT/rkrga" "${{ steps.rockchip_deps.outputs.rga_sha }}"
-
-          export CC="ccache gcc"
-          export CXX="ccache g++"
-          export CFLAGS="$TARGET_CFLAGS"
-          export CXXFLAGS="$TARGET_CFLAGS -fpermissive"
-          export LDFLAGS="$TARGET_LDFLAGS"
-
-          meson_args=(
-            --prefix="$DEPS_PREFIX"
-            --libdir=lib
-            --buildtype=release
-            --default-library=shared
-            -Dlibdrm=false
-            -Dlibrga_demo=false
-          )
-
-          meson setup "$BUILD_ROOT/rkrga" "$BUILD_ROOT/rkrga-build" "${meson_args[@]}"
-          meson compile -C "$BUILD_ROOT/rkrga-build"
-          meson install -C "$BUILD_ROOT/rkrga-build"
+      - name: Build FFmpeg package in Ubuntu 22.04 ARM64
+        env:
+          MPP_SHA: ${{ steps.rockchip_deps.outputs.mpp_sha }}
+          RGA_SHA: ${{ steps.rockchip_deps.outputs.rga_sha }}
+        run: ./build-rockchip.sh "${{ matrix.target }}"
 
       - name: Save Rockchip dependency cache
         if: steps.rockchip_deps_cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
-          path: ${{ env.DEPS_PREFIX }}
+          path: .rockchip-cache/deps/${{ matrix.target }}/${{ steps.rockchip_deps.outputs.cache_key }}
           key: ${{ steps.rockchip_deps_cache.outputs.cache-primary-key }}
-
-      - name: Show Rockchip dependency metadata
-        run: |
-          set -euxo pipefail
-
-          export PKG_CONFIG_PATH="$DEPS_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-
-          pkg-config --modversion rockchip_mpp
-          pkg-config --modversion librga
-          pkg-config --modversion libdrm
-          pkg-config --cflags --libs rockchip_mpp librga libdrm
-          find "$DEPS_PREFIX" -maxdepth 3 -type f | sort
-
-      - name: Configure FFmpeg
-        run: |
-          set -euxo pipefail
-
-          export PKG_CONFIG_PATH="$DEPS_PREFIX/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
-
-          configure_args=(
-            --prefix="$INSTALL_PREFIX"
-            --disable-debug
-            --disable-doc
-            --disable-ffplay
-            --disable-everything
-            --disable-autodetect
-            --enable-gpl
-            --enable-version3
-            --enable-lto=auto
-            "--cc=ccache gcc"
-            "--cxx=ccache g++"
-            "--host-cc=ccache gcc"
-            --enable-libdrm
-            --enable-rkmpp
-            --enable-rkrga
-            --enable-network
-            --enable-protocol=file
-            --enable-protocol=pipe
-            --enable-protocol=tcp
-            --enable-protocol=udp
-            --enable-protocol=rtp
-            --enable-protocol=http
-            --enable-demuxer=rtsp
-            --enable-demuxer=rtp
-            --enable-demuxer=sdp
-            --enable-demuxer=mpegts
-            --enable-demuxer=h264
-            --enable-demuxer=hevc
-            --enable-demuxer=mov
-            --enable-muxer=rtsp
-            --enable-muxer=rtp
-            --enable-muxer=rtp_mpegts
-            --enable-muxer=mpegts
-            --enable-muxer=h264
-            --enable-muxer=hevc
-            --enable-muxer=mp4
-            --enable-muxer=mov
-            --enable-muxer=null
-            --enable-parser=h264
-            --enable-parser=hevc
-            --enable-bsf=h264_mp4toannexb
-            --enable-bsf=hevc_mp4toannexb
-            --enable-decoder=h264_rkmpp
-            --enable-decoder=hevc_rkmpp
-            --enable-decoder=pcm_mulaw
-            --enable-encoder=h264_rkmpp
-            --enable-encoder=hevc_rkmpp
-            --enable-encoder=pcm_mulaw
-            --enable-filter=aresample
-            --enable-filter=hwdownload
-            --enable-filter=hwmap
-            --enable-filter=hwupload
-            --enable-filter=scale_rkrga
-            --enable-filter=vpp_rkrga
-            --enable-filter=overlay_rkrga
-            --enable-filter=format
-            --enable-filter=null
-            --arch=${{ matrix.ffmpeg_arch }}
-            --cpu=${{ matrix.ffmpeg_cpu }}
-            --extra-cflags="-I$DEPS_PREFIX/include $TARGET_CFLAGS"
-            --extra-ldflags="-L$DEPS_PREFIX/lib $TARGET_LDFLAGS"
-          )
-
-          ./configure "${configure_args[@]}"
-
-      - name: Build and install FFmpeg
-        run: |
-          set -euxo pipefail
-
-          make -j"$(nproc)"
-          make install
-
-      - name: Set package runtime library paths
-        run: |
-          set -euxo pipefail
-
-          patchelf --set-rpath '$ORIGIN/../lib:$ORIGIN/lib' "$INSTALL_PREFIX/bin/ffmpeg"
-          patchelf --set-rpath '$ORIGIN/../lib:$ORIGIN/lib' "$INSTALL_PREFIX/bin/ffprobe"
-          readelf -d "$INSTALL_PREFIX/bin/ffmpeg" | grep -F '$ORIGIN/../lib:$ORIGIN/lib'
-          readelf -d "$INSTALL_PREFIX/bin/ffprobe" | grep -F '$ORIGIN/../lib:$ORIGIN/lib'
-
-      - name: Verify configured components
-        run: |
-          set -euxo pipefail
-
-          required_configs=(
-            CONFIG_H264_RKMPP_DECODER
-            CONFIG_HEVC_RKMPP_DECODER
-            CONFIG_H264_RKMPP_ENCODER
-            CONFIG_HEVC_RKMPP_ENCODER
-            CONFIG_RTSP_DEMUXER
-            CONFIG_RTP_DEMUXER
-            CONFIG_SDP_DEMUXER
-            CONFIG_MPEGTS_DEMUXER
-            CONFIG_H264_DEMUXER
-            CONFIG_HEVC_DEMUXER
-            CONFIG_MOV_DEMUXER
-            CONFIG_RTSP_MUXER
-            CONFIG_RTP_MUXER
-            CONFIG_RTP_MPEGTS_MUXER
-            CONFIG_MPEGTS_MUXER
-            CONFIG_H264_MUXER
-            CONFIG_HEVC_MUXER
-            CONFIG_MP4_MUXER
-            CONFIG_MOV_MUXER
-            CONFIG_NULL_MUXER
-            CONFIG_H264_PARSER
-            CONFIG_HEVC_PARSER
-            CONFIG_H264_MP4TOANNEXB_BSF
-            CONFIG_HEVC_MP4TOANNEXB_BSF
-            CONFIG_FILE_PROTOCOL
-            CONFIG_PIPE_PROTOCOL
-            CONFIG_TCP_PROTOCOL
-            CONFIG_UDP_PROTOCOL
-            CONFIG_RTP_PROTOCOL
-            CONFIG_HTTP_PROTOCOL
-            CONFIG_HWDOWNLOAD_FILTER
-            CONFIG_HWMAP_FILTER
-            CONFIG_HWUPLOAD_FILTER
-            CONFIG_SCALE_RKRGA_FILTER
-            CONFIG_VPP_RKRGA_FILTER
-            CONFIG_OVERLAY_RKRGA_FILTER
-            CONFIG_FORMAT_FILTER
-            CONFIG_NULL_FILTER
-          )
-
-          for config_name in "${required_configs[@]}"; do
-            grep -qx "${config_name}=yes" ffbuild/config.mak
-          done
-
-      - name: Package runtime
-        run: |
-          set -euxo pipefail
-
-          mkdir -p "$PACKAGE_DIR/lib"
-          cp -a "$INSTALL_PREFIX/." "$PACKAGE_DIR/"
-          cp -a "$INSTALL_PREFIX/bin/ffmpeg" "$PACKAGE_DIR/ffmpeg"
-          cp -a "$INSTALL_PREFIX/bin/ffprobe" "$PACKAGE_DIR/ffprobe"
-          rm -rf "$PACKAGE_DIR/bin"
-
-          shopt -s nullglob
-          cp -a "$DEPS_PREFIX"/lib/*.so* "$PACKAGE_DIR/lib/"
-
-          {
-            echo "target=${{ matrix.target }}"
-            echo "artifact=${{ matrix.artifact }}"
-            echo "runner=$(uname -m)"
-            echo "ffmpeg_arch=${{ matrix.ffmpeg_arch }}"
-            echo "ffmpeg_cpu=${{ matrix.ffmpeg_cpu }}"
-            echo "target_cflags=$TARGET_CFLAGS"
-            getconf GNU_LIBC_VERSION || true
-          } > "$PACKAGE_DIR/BUILDINFO.txt"
-
-          version_date=$(TZ=Asia/Shanghai date +%Y.%m.%d)
-          short_sha=${GITHUB_SHA:0:7}
-          printf '%s-%s+%s\n' "$version_date" "$short_sha" '${{ matrix.target }}' > "$PACKAGE_DIR/version.txt"
-
-          cat > "$PACKAGE_DIR/README.txt" <<EOF
-          ffmpeg-rockchip low-latency ${{ matrix.target }} build
-
-          Built on Ubuntu 22.04 with LTO and target-specific CPU flags.
-          MPP and RGA are packaged under lib/. FFmpeg is intentionally
-          component-pruned for RTSP/RTP, H.264/HEVC rkmpp codecs, and RGA
-          filters instead of full general-purpose codec coverage.
-          Run ./ffmpeg from this directory so the embedded runtime path can
-          resolve the bundled lib/ directory.
-
-          Smoke checks:
-            ./ffmpeg -decoders | grep rkmpp
-            ./ffmpeg -encoders | grep rkmpp
-            ./ffmpeg -filters | grep rkrga
-          EOF
-
-      - name: Verify native package
-        run: |
-          set -euxo pipefail
-
-          mkdir -p "$BUILD_ROOT"
-          test ! -e "$PACKAGE_DIR/bin"
-          grep -Eq '^[0-9]{4}\.[0-9]{2}\.[0-9]{2}-[0-9a-f]{7}\+${{ matrix.target }}$' "$PACKAGE_DIR/version.txt"
-          file "$PACKAGE_DIR/ffmpeg"
-          readelf -d "$PACKAGE_DIR/ffmpeg" | grep -F '$ORIGIN/../lib:$ORIGIN/lib'
-          verify_bundled_library() {
-            local ldd_output=$1
-            local soname=$2
-            local library_path
-            local resolved_path
-            local package_lib
-
-            library_path=$(awk -v soname="$soname" '$1 == soname { print $3; found = 1 } END { if (!found) exit 1 }' "$ldd_output")
-            resolved_path=$(realpath "$library_path")
-            package_lib=$(realpath "$PACKAGE_DIR/lib")
-
-            case "$resolved_path" in
-              "$package_lib"/*)
-                printf '%s resolves to bundled library %s\n' "$soname" "$resolved_path"
-                ;;
-              *)
-                printf 'Expected %s to resolve under %s, got %s\n' "$soname" "$package_lib" "$resolved_path" >&2
-                exit 1
-                ;;
-            esac
-          }
-
-          env -u LD_LIBRARY_PATH ldd "$PACKAGE_DIR/ffmpeg" | tee "$BUILD_ROOT/ldd-root.txt"
-          verify_bundled_library "$BUILD_ROOT/ldd-root.txt" librga.so.2
-          verify_bundled_library "$BUILD_ROOT/ldd-root.txt" librockchip_mpp.so.1
-          "$PACKAGE_DIR/ffmpeg" -hide_banner -decoders | grep -E 'h264_rkmpp|hevc_rkmpp'
-          "$PACKAGE_DIR/ffmpeg" -hide_banner -encoders | grep -E 'h264_rkmpp|hevc_rkmpp'
-          "$PACKAGE_DIR/ffmpeg" -hide_banner -demuxers | grep -E 'rtsp|rtp|sdp|mpegts'
-          "$PACKAGE_DIR/ffmpeg" -hide_banner -muxers | grep -E 'rtsp|rtp|mpegts'
-          "$PACKAGE_DIR/ffmpeg" -hide_banner -filters | grep -E 'hwdownload|hwmap|hwupload|overlay_rkrga|scale_rkrga|vpp_rkrga'
-
-      - name: Show compiler cache stats
-        if: always()
-        run: |
-          set -euo pipefail
-
-          if command -v ccache >/dev/null 2>&1; then
-            ccache --show-stats || true
-          fi
 
       - name: Save compiler cache
         if: always() && steps.ccache_cache.outcome == 'success' && steps.ccache_cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
         with:
-          path: ${{ env.CCACHE_DIR }}
+          path: .rockchip-cache/ccache/${{ matrix.target }}
           key: ${{ steps.ccache_cache.outputs.cache-primary-key }}
 
       - name: Upload FFmpeg package
         uses: actions/upload-artifact@v6
         with:
-          name: ${{ matrix.artifact }}
-          path: ${{ env.PACKAGE_DIR }}
+          name: ${{ steps.target.outputs.artifact }}
+          path: ${{ steps.target.outputs.package_path }}
           if-no-files-found: error
 
       - name: Upload configure log on failure
@@ -479,5 +91,5 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: ffmpeg-config-log-${{ matrix.target }}
-          path: ffbuild/config.log
+          path: .build/rockchip/${{ matrix.target }}/ffmpeg/ffbuild/config.log
           if-no-files-found: ignore

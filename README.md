@@ -21,6 +21,62 @@ This project aims to provide full hardware transcoding pipeline in FFmpeg CLI fo
 ## How to use
 The documentation is available on the [Wiki](https://github.com/nyanmisaka/ffmpeg-rockchip/wiki) page of this project.
 
+## Linux ARM64 builds
+
+The low-latency release build runs in an Ubuntu 22.04 ARM64 container. The same
+Dockerfile and build scripts are used locally and by GitHub Actions.
+
+### Requirements
+
+| Requirement | Supported value |
+| --- | --- |
+| Host operating system | Linux |
+| Host architecture | ARM64 (`aarch64` or `arm64`) |
+| Docker server | Linux ARM64 |
+| Build targets | `rk3588`, `rk3576`, `rv1126b` |
+
+macOS, Linux AMD64, and other host or Docker architectures are rejected before
+the build starts.
+
+### Build a target
+
+```bash
+./build-rockchip.sh rk3588
+```
+
+Build all targets sequentially:
+
+```bash
+./build-rockchip.sh all
+```
+
+The packaged runtime is written to
+`artifact/ffmpeg-rockchip-<target>-ubuntu22-arm64/`. Intermediate FFmpeg builds
+are under `.build/rockchip/`, installed Rockchip dependencies and compiler
+caches are under `.rockchip-cache/`, and staged installs are under `dist/`.
+
+The first build creates the Ubuntu 22.04 build image and compiles MPP and RGA.
+Later builds reuse revision- and compiler-flag-specific dependency caches plus
+the per-target `ccache` directory.
+
+### Clean build state
+
+Clean one target, including its MPP, RGA, and compiler caches:
+
+```bash
+./build-rockchip.sh clean rk3588
+```
+
+Clean all three targets:
+
+```bash
+./build-rockchip.sh clean all
+```
+
+GitHub Actions keeps only the target matrix, cache transport, and artifact
+upload in the workflow. Build dependencies, target flags, FFmpeg configuration,
+packaging, and runtime checks are maintained under `build/rockchip/`.
+
 
 ## Codecs and filters
 ### Decoders/Hwaccel

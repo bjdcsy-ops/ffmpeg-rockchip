@@ -19,7 +19,8 @@ git_with_retry() {
       return "$status"
     fi
 
-    printf 'git %s failed, retrying in %s seconds (attempt %s/%s)\n' "$1" "$delay" "$attempt" "$attempts" >&2
+    printf 'git %s failed, retrying in %s seconds (attempt %s/%s)\n' \
+      "$1" "$delay" "$attempt" "$attempts" >&2
     sleep "$delay"
     delay=$((delay * 2))
   done
@@ -29,7 +30,8 @@ git_branch_sha() {
   local repository=$1
   local branch=$2
 
-  git_with_retry ls-remote --exit-code "$repository" "refs/heads/$branch" | awk '{ print $1 }'
+  git_with_retry ls-remote --exit-code "$repository" "refs/heads/$branch" |
+    awk '{ print $1 }'
 }
 
 git_clone_branch_with_retry() {
@@ -44,8 +46,9 @@ git_clone_branch_with_retry() {
   attempts=${GIT_RETRY_ATTEMPTS:-5}
   delay=${GIT_RETRY_INITIAL_DELAY_SECONDS:-10}
   for ((attempt = 1; attempt <= attempts; attempt++)); do
-    rm -rf "$destination"
-    if git -c credential.helper= -c core.askPass= clone --depth=1 --branch "$branch" "$repository" "$destination"; then
+    rm -rf -- "$destination"
+    if git -c credential.helper= -c core.askPass= clone \
+      --depth=1 --branch "$branch" "$repository" "$destination"; then
       return 0
     else
       status=$?
@@ -55,7 +58,8 @@ git_clone_branch_with_retry() {
       return "$status"
     fi
 
-    printf 'git clone failed, retrying in %s seconds (attempt %s/%s)\n' "$delay" "$attempt" "$attempts" >&2
+    printf 'git clone failed, retrying in %s seconds (attempt %s/%s)\n' \
+      "$delay" "$attempt" "$attempts" >&2
     sleep "$delay"
     delay=$((delay * 2))
   done

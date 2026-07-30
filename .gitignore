@@ -38,6 +38,10 @@
 /config_components.h
 /coverage.info
 /lcov/
+/artifact/
+/.build/
+/.rockchip-cache/
+/dist/
 /src
 /mapfile
 /tools/python/__pycache__/
