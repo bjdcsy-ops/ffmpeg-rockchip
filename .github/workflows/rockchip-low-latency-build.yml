@@ -83,7 +83,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: ${{ steps.target.outputs.artifact }}
-          path: ${{ steps.target.outputs.package_path }}
+          path: ${{ steps.target.outputs.archive_path }}
           if-no-files-found: error
 
       - name: Upload configure log on failure

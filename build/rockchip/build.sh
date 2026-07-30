@@ -55,6 +55,18 @@ if [ -n "${ROCKCHIP_BUILD_TRACE:-}" ]; then
   set -x
 fi
 
+source_sha=${SOURCE_SHA:-${GITHUB_SHA:-}}
+if [ -z "$source_sha" ]; then
+  source_sha=$(git -C "$SOURCE_DIR" rev-parse HEAD)
+fi
+
+# FFmpeg otherwise derives a checkout-dependent abbreviation length from
+# `git describe`, which differs between a full local clone and Actions.
+export revision=${source_sha:0:7}
+export SOURCE_DATE_EPOCH=${SOURCE_DATE_EPOCH:-$(
+  git -C "$SOURCE_DIR" show -s --format=%ct HEAD
+)}
+
 export GIT_TERMINAL_PROMPT=0
 export GIT_RETRY_ATTEMPTS=${GIT_RETRY_ATTEMPTS:-5}
 export GIT_RETRY_INITIAL_DELAY_SECONDS=${GIT_RETRY_INITIAL_DELAY_SECONDS:-10}
@@ -73,6 +85,7 @@ BUILD_ROOT="$SOURCE_DIR/.build/rockchip/$target"
 DEPS_PREFIX="$SOURCE_DIR/.rockchip-cache/deps/$target/$deps_cache_key"
 INSTALL_PREFIX="$SOURCE_DIR/dist/$target"
 PACKAGE_DIR="$SOURCE_DIR/artifact/$ROCKCHIP_ARTIFACT"
+PACKAGE_ARCHIVE="$SOURCE_DIR/artifact/$ROCKCHIP_ARTIFACT.tar.gz"
 FFMPEG_BUILD_DIR="$BUILD_ROOT/ffmpeg"
 CCACHE_DIR="$SOURCE_DIR/.rockchip-cache/ccache/$target"
 
@@ -80,6 +93,7 @@ export BUILD_ROOT
 export DEPS_PREFIX
 export INSTALL_PREFIX
 export PACKAGE_DIR
+export PACKAGE_ARCHIVE
 export CCACHE_DIR
 export CCACHE_MAXSIZE=${CCACHE_MAXSIZE:-750M}
 export CCACHE_COMPILERCHECK=${CCACHE_COMPILERCHECK:-content}
@@ -178,6 +192,7 @@ find "$DEPS_PREFIX" -maxdepth 3 -type f -print | sort
 
 mkdir -p "$FFMPEG_BUILD_DIR"
 rm -rf -- "$INSTALL_PREFIX" "$PACKAGE_DIR"
+rm -f -- "$PACKAGE_ARCHIVE"
 mkdir -p "$INSTALL_PREFIX" "$PACKAGE_DIR"
 
 configure_args=(
@@ -324,10 +339,6 @@ cp -a "$DEPS_PREFIX"/lib/*.so* "$PACKAGE_DIR/lib/"
   getconf GNU_LIBC_VERSION || true
 } >"$PACKAGE_DIR/BUILDINFO.txt"
 
-source_sha=${SOURCE_SHA:-${GITHUB_SHA:-}}
-if [ -z "$source_sha" ]; then
-  source_sha=$(git -C "$SOURCE_DIR" rev-parse HEAD)
-fi
 version_date=$(TZ=Asia/Shanghai date +%Y.%m.%d)
 short_sha=${source_sha:0:7}
 printf '%s-%s+%s\n' "$version_date" "$short_sha" "$target" \
@@ -398,4 +409,16 @@ verify_bundled_library "$BUILD_ROOT/ldd-root.txt" librockchip_mpp.so.1
 "$PACKAGE_DIR/ffmpeg" -hide_banner -filters |
   grep -E 'hwdownload|hwmap|hwupload|overlay_rkrga|scale_rkrga|vpp_rkrga'
 
+tar \
+  --sort=name \
+  --mtime="@$SOURCE_DATE_EPOCH" \
+  --owner=0 \
+  --group=0 \
+  --numeric-owner \
+  -C "$SOURCE_DIR/artifact" \
+  -cf - \
+  "$ROCKCHIP_ARTIFACT" |
+  gzip -n >"$PACKAGE_ARCHIVE"
+
 printf 'Build completed: %s\n' "$PACKAGE_DIR"
+printf 'Package archive: %s\n' "$PACKAGE_ARCHIVE"
