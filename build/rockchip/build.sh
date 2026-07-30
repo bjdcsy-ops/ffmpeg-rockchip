@@ -86,7 +86,7 @@ DEPS_PREFIX="$SOURCE_DIR/.rockchip-cache/deps/$target/$deps_cache_key"
 INSTALL_PREFIX="$SOURCE_DIR/dist/$target"
 PACKAGE_DIR="$SOURCE_DIR/artifact/$ROCKCHIP_ARTIFACT"
 FFMPEG_BUILD_DIR="$BUILD_ROOT/ffmpeg"
-CCACHE_DIR="$SOURCE_DIR/.rockchip-cache/ccache/$target"
+CCACHE_DIR="$SOURCE_DIR/.rockchip-cache/ccache/$target/$ROCKCHIP_CCACHE_CACHE_VERSION"
 
 export BUILD_ROOT
 export DEPS_PREFIX

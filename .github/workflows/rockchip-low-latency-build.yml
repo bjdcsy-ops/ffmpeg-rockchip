@@ -54,7 +54,7 @@ jobs:
         id: ccache_cache
         uses: actions/cache/restore@v5
         with:
-          path: .rockchip-cache/ccache/${{ matrix.target }}
+          path: .rockchip-cache/ccache/${{ matrix.target }}/${{ steps.rockchip_deps.outputs.ccache_cache_version }}
           key: ccache-ubuntu-22.04-arm-${{ matrix.target }}-${{ steps.rockchip_deps.outputs.ccache_cache_version }}-${{ steps.rockchip_deps.outputs.ccache_period }}
           restore-keys: |
             ccache-ubuntu-22.04-arm-${{ matrix.target }}-${{ steps.rockchip_deps.outputs.ccache_cache_version }}-
