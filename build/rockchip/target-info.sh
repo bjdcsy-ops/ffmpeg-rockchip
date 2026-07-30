@@ -15,4 +15,3 @@ rockchip_load_target "$target"
 
 printf 'artifact=%s\n' "$ROCKCHIP_ARTIFACT"
 printf 'package_path=artifact/%s\n' "$ROCKCHIP_ARTIFACT"
-printf 'archive_path=artifact/%s.tar.gz\n' "$ROCKCHIP_ARTIFACT"

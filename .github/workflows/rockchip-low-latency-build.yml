@@ -65,6 +65,12 @@ jobs:
           RGA_SHA: ${{ steps.rockchip_deps.outputs.rga_sha }}
         run: ./build-rockchip.sh "${{ matrix.target }}"
 
+      - name: Archive FFmpeg package
+        run: |
+          tar -C artifact -czf \
+            "artifact/${{ steps.target.outputs.artifact }}.tar.gz" \
+            "${{ steps.target.outputs.artifact }}"
+
       - name: Save Rockchip dependency cache
         if: steps.rockchip_deps_cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v5
@@ -83,7 +89,7 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: ${{ steps.target.outputs.artifact }}
-          path: ${{ steps.target.outputs.archive_path }}
+          path: artifact/${{ steps.target.outputs.artifact }}.tar.gz
           if-no-files-found: error
 
       - name: Upload configure log on failure

@@ -74,8 +74,7 @@ clean_target() {
     "$REPOSITORY_ROOT/.rockchip-cache/deps/$target" \
     "$REPOSITORY_ROOT/.rockchip-cache/ccache/$target" \
     "$REPOSITORY_ROOT/dist/$target" \
-    "$REPOSITORY_ROOT/artifact/$ROCKCHIP_ARTIFACT" \
-    "$REPOSITORY_ROOT/artifact/$ROCKCHIP_ARTIFACT.tar.gz"
+    "$REPOSITORY_ROOT/artifact/$ROCKCHIP_ARTIFACT"
   printf 'Cleaned build state for %s\n' "$target"
 }
 

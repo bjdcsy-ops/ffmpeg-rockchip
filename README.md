@@ -50,16 +50,10 @@ Build all targets sequentially:
 ./build-rockchip.sh all
 ```
 
-The packaged runtime and its archive are written to:
-
-```text
-artifact/ffmpeg-rockchip-<target>-ubuntu22-arm64/
-artifact/ffmpeg-rockchip-<target>-ubuntu22-arm64.tar.gz
-```
-
-Intermediate FFmpeg builds are under `.build/rockchip/`, installed Rockchip
-dependencies and compiler caches are under `.rockchip-cache/`, and staged
-installs are under `dist/`.
+The packaged runtime is written to
+`artifact/ffmpeg-rockchip-<target>-ubuntu22-arm64/`. Intermediate FFmpeg builds
+are under `.build/rockchip/`, installed Rockchip dependencies and compiler
+caches are under `.rockchip-cache/`, and staged installs are under `dist/`.
 
 The first build creates the Ubuntu 22.04 build image and compiles MPP and RGA.
 Later builds reuse revision- and compiler-flag-specific dependency caches plus
@@ -82,8 +76,9 @@ Clean all three targets:
 GitHub Actions keeps only the target matrix, cache transport, and artifact
 upload in the workflow. Build dependencies, target flags, FFmpeg configuration,
 packaging, and runtime checks are maintained under `build/rockchip/`.
-The Actions artifact contains the same `.tar.gz` produced locally. Extracting
-the archive preserves executable permissions and Rockchip library symlinks:
+Before upload, Actions archives the package directory as `.tar.gz` to preserve
+executable permissions and Rockchip library symlinks. Local builds do not
+create this archive. Extract an Actions artifact with:
 
 ```bash
 tar -xzf ffmpeg-rockchip-rk3576-ubuntu22-arm64.tar.gz
