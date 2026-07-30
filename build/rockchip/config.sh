@@ -1,11 +1,19 @@
 #!/usr/bin/env bash
 
+# This file is sourced by several build entry points.
+# shellcheck disable=SC2034
+
 MPP_REPOSITORY=${MPP_REPOSITORY:-https://github.com/nyanmisaka/mpp.git}
 MPP_BRANCH=${MPP_BRANCH:-jellyfin-mpp}
 RGA_REPOSITORY=${RGA_REPOSITORY:-https://github.com/nyanmisaka/rk-mirrors.git}
 RGA_BRANCH=${RGA_BRANCH:-jellyfin-rga}
 
-ROCKCHIP_DEPS_CACHE_VERSION=${ROCKCHIP_DEPS_CACHE_VERSION:-v2}
+ROCKCHIP_CONFIG_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+source "$ROCKCHIP_CONFIG_DIR/dependencies.lock"
+
+MPP_SHA=$ROCKCHIP_LOCKED_MPP_SHA
+RGA_SHA=$ROCKCHIP_LOCKED_RGA_SHA
+export MPP_SHA RGA_SHA
 ROCKCHIP_CCACHE_CACHE_VERSION=${ROCKCHIP_CCACHE_CACHE_VERSION:-v3}
 ROCKCHIP_BUILD_IMAGE=${ROCKCHIP_BUILD_IMAGE:-ffmpeg-rockchip-build:ubuntu22-arm64}
 
@@ -44,22 +52,41 @@ rockchip_load_target() {
   esac
 }
 
-rockchip_flags_key() {
+rockchip_builder_fingerprint() {
   {
+    cat /etc/os-release
+    dpkg-query --show --showformat='${Package}=${Version}\n' | LC_ALL=C sort
+    gcc --version
+    ld --version
+    cmake --version
+    meson --version
+  } | sha256sum | cut -c1-16
+}
+
+rockchip_dependency_input_hash() {
+  local build_dependencies_sha
+  local builder_fingerprint=$1
+
+  build_dependencies_sha=$(
+    sha256sum "$ROCKCHIP_CONFIG_DIR/lib/build-dependencies.sh" |
+      awk '{ print $1 }'
+  )
+
+  {
+    printf 'build_dependencies_sha256=%s\n' "$build_dependencies_sha"
     printf 'target_cflags=%s\n' "$ROCKCHIP_TARGET_CFLAGS"
     printf 'target_ldflags=%s\n' "$ROCKCHIP_TARGET_LDFLAGS"
-  } | sha256sum | cut -c1-12
+    printf 'builder_fingerprint=%s\n' "$builder_fingerprint"
+  } | sha256sum | cut -c1-16
 }
 
 rockchip_dependency_cache_key() {
   local mpp_sha=$1
   local rga_sha=$2
-  local flags_key
+  local input_hash=$3
 
-  flags_key=$(rockchip_flags_key)
-  printf '%s-mpp-%s-rga-%s-flags-%s\n' \
-    "$ROCKCHIP_DEPS_CACHE_VERSION" \
+  printf 'mpp-%s-rga-%s-inputs-%s\n' \
     "${mpp_sha:0:12}" \
     "${rga_sha:0:12}" \
-    "$flags_key"
+    "$input_hash"
 }

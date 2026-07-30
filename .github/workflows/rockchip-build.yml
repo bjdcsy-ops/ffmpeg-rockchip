@@ -1,0 +1,160 @@
+name: Build Rockchip FFmpeg
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+defaults:
+  run:
+    shell: bash
+
+concurrency:
+  group: rockchip-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.target }} build
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 150
+
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - rk3588
+          - rk3576
+          - rv1126b
+
+    steps:
+      - name: Checkout FFmpeg
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Prepare Ubuntu 22.04 ARM64 build image
+        run: ./build-rockchip.sh image
+
+      - name: Validate build files
+        if: matrix.target == 'rk3576'
+        run: |
+          source build/rockchip/config.sh
+          docker run \
+            --rm \
+            --platform linux/arm64 \
+            --user "$(id -u):$(id -g)" \
+            --workdir /workspace \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --entrypoint /bin/bash \
+            "$ROCKCHIP_BUILD_IMAGE" \
+            /workspace/build/rockchip/tools/check.sh
+
+      - name: Resolve target metadata
+        id: target
+        run: build/rockchip/tools/target-info.sh "${{ matrix.target }}" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve Rockchip dependency revisions
+        id: rockchip_deps
+        run: |
+          source build/rockchip/config.sh
+          docker run \
+            --rm \
+            --platform linux/arm64 \
+            --user "$(id -u):$(id -g)" \
+            --workdir /workspace \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --entrypoint /bin/bash \
+            "$ROCKCHIP_BUILD_IMAGE" \
+            /workspace/build/rockchip/tools/resolve-dependencies.sh \
+            "${{ matrix.target }}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Rockchip dependency cache
+        id: rockchip_deps_cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ steps.rockchip_deps.outputs.dependency_cache_path }}
+          key: rockchip-deps-ubuntu-22.04-arm-${{ matrix.target }}-${{ steps.rockchip_deps.outputs.dependency_cache_key }}
+
+      - name: Restore compiler cache
+        id: ccache_cache
+        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ steps.rockchip_deps.outputs.ccache_path }}
+          key: ccache-ubuntu-22.04-arm-${{ matrix.target }}-${{ steps.rockchip_deps.outputs.builder_fingerprint }}-${{ steps.rockchip_deps.outputs.ccache_cache_version }}-${{ steps.rockchip_deps.outputs.ccache_period }}-${{ github.sha }}
+          restore-keys: |
+            ccache-ubuntu-22.04-arm-${{ matrix.target }}-${{ steps.rockchip_deps.outputs.builder_fingerprint }}-${{ steps.rockchip_deps.outputs.ccache_cache_version }}-${{ steps.rockchip_deps.outputs.ccache_period }}-
+            ccache-ubuntu-22.04-arm-${{ matrix.target }}-${{ steps.rockchip_deps.outputs.builder_fingerprint }}-${{ steps.rockchip_deps.outputs.ccache_cache_version }}-
+
+      - name: Build FFmpeg package in Ubuntu 22.04 ARM64
+        run: ./build-rockchip.sh "${{ matrix.target }}"
+
+      - name: Archive FFmpeg package
+        run: |
+          artifact="${{ steps.target.outputs.artifact }}"
+          source_date_epoch=$(
+            sed -n 's/^source_date_epoch=//p' \
+              "artifact/$artifact/BUILDINFO.txt"
+          )
+          test -n "$source_date_epoch"
+
+          tar \
+            --format=gnu \
+            --sort=name \
+            --mtime="@$source_date_epoch" \
+            --owner=0 \
+            --group=0 \
+            --numeric-owner \
+            -C artifact \
+            -cf - \
+            "$artifact" \
+            "$artifact.mtree" |
+            gzip -n >"artifact/$artifact.tar.gz"
+
+          (
+            cd artifact
+            sha256sum "$artifact.tar.gz" >"$artifact.tar.gz.sha256"
+          )
+
+      - name: Save Rockchip dependency cache
+        if: steps.rockchip_deps_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ steps.rockchip_deps.outputs.dependency_cache_path }}
+          key: ${{ steps.rockchip_deps_cache.outputs.cache-primary-key }}
+
+      - name: Save compiler cache
+        if: success() && steps.ccache_cache.outcome == 'success' && steps.ccache_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25 # v5
+        with:
+          path: ${{ steps.rockchip_deps.outputs.ccache_path }}
+          key: ${{ steps.ccache_cache.outputs.cache-primary-key }}
+
+      - name: Attest FFmpeg package
+        if: github.ref == 'refs/heads/master'
+        uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
+        with:
+          subject-path: artifact/${{ steps.target.outputs.artifact }}.tar.gz
+
+      - name: Upload FFmpeg package
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ${{ steps.target.outputs.artifact }}
+          path: |
+            artifact/${{ steps.target.outputs.artifact }}.tar.gz
+            artifact/${{ steps.target.outputs.artifact }}.tar.gz.sha256
+          if-no-files-found: error
+
+      - name: Upload configure log on failure
+        if: failure()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: ffmpeg-config-log-${{ matrix.target }}
+          path: .build/rockchip/${{ matrix.target }}/ffmpeg/ffbuild/config.log
+          if-no-files-found: ignore

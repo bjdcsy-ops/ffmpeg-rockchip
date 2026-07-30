@@ -34,9 +34,9 @@ git_branch_sha() {
     awk '{ print $1 }'
 }
 
-git_clone_branch_with_retry() {
+git_clone_commit_with_retry() {
   local repository=$1
-  local branch=$2
+  local commit=$2
   local destination=$3
   local attempt
   local attempts
@@ -47,8 +47,12 @@ git_clone_branch_with_retry() {
   delay=${GIT_RETRY_INITIAL_DELAY_SECONDS:-10}
   for ((attempt = 1; attempt <= attempts; attempt++)); do
     rm -rf -- "$destination"
-    if git -c credential.helper= -c core.askPass= clone \
-      --depth=1 --branch "$branch" "$repository" "$destination"; then
+    mkdir -p "$destination"
+    git -C "$destination" init --quiet
+    git -C "$destination" remote add origin "$repository"
+    if git -c credential.helper= -c core.askPass= \
+      -C "$destination" fetch --depth=1 origin "$commit" &&
+      git -C "$destination" checkout --detach --quiet FETCH_HEAD; then
       return 0
     else
       status=$?
@@ -58,8 +62,8 @@ git_clone_branch_with_retry() {
       return "$status"
     fi
 
-    printf 'git clone failed, retrying in %s seconds (attempt %s/%s)\n' \
-      "$delay" "$attempt" "$attempts" >&2
+    printf 'git fetch %s failed, retrying in %s seconds (attempt %s/%s)\n' \
+      "$commit" "$delay" "$attempt" "$attempts" >&2
     sleep "$delay"
     delay=$((delay * 2))
   done
