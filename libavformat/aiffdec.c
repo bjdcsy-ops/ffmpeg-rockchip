@@ -21,7 +21,9 @@
 
 #include "libavutil/intreadwrite.h"
 #include "libavutil/dict.h"
+#include "libavutil/mem.h"
 #include "avformat.h"
+#include "avio_internal.h"
 #include "demux.h"
 #include "internal.h"
 #include "pcm.h"
@@ -59,7 +61,7 @@ static int64_t get_tag(AVIOContext *pb, uint32_t * tag)
     int64_t size;
 
     if (avio_feof(pb))
-        return AVERROR(EIO);
+        return AVERROR_INVALIDDATA;
 
     *tag = avio_rl32(pb);
     size = avio_rb32(pb);
@@ -106,6 +108,8 @@ static int get_aiff_header(AVFormatContext *s, int64_t size,
         size++;
     par->codec_type = AVMEDIA_TYPE_AUDIO;
     channels = avio_rb16(pb);
+    if (par->ch_layout.nb_channels && par->ch_layout.nb_channels != channels)
+        return AVERROR_INVALIDDATA;
     par->ch_layout.nb_channels = channels;
     num_frames = avio_rb32(pb);
     par->bits_per_coded_sample = avio_rb16(pb);
@@ -170,6 +174,12 @@ static int get_aiff_header(AVFormatContext *s, int64_t size,
             break;
         case AV_CODEC_ID_GSM:
             par->block_align = 33;
+            break;
+        case AV_CODEC_ID_G728:
+            par->block_align = 5;
+            break;
+        case AV_CODEC_ID_ADPCM_N64:
+            par->block_align = 9;
             break;
         default:
             aiff->block_duration = 1;
@@ -347,6 +357,32 @@ static int aiff_read_header(AVFormatContext *s)
 
             goto got_sound;
             break;
+        case MKTAG('A','P','P','L'):
+            if (size > 4) {
+                uint32_t chunk = avio_rl32(pb);
+
+                size -= 4;
+                if (chunk == MKTAG('s','t','o','c')) {
+                    int len = avio_r8(pb);
+
+                    size--;
+                    if (len == 11 && size > 11) {
+                        uint8_t chunk[11];
+
+                        ret = ffio_read_size(pb, chunk, 11);
+                        if (ret < 0)
+                            return ret;
+                        size -= ret;
+                        if (!memcmp(chunk, "VADPCMCODES", sizeof(chunk))) {
+                            if ((ret = ff_get_extradata(s, st->codecpar, pb, size)) < 0)
+                                return ret;
+                            size -= ret;
+                        }
+                    }
+                }
+            }
+            avio_skip(pb, size);
+            break;
         case 0:
             if (offset > 0 && st->codecpar->block_align) // COMM && SSND
                 goto got_sound;
@@ -433,13 +469,13 @@ static int aiff_read_packet(AVFormatContext *s,
     return 0;
 }
 
-const AVInputFormat ff_aiff_demuxer = {
-    .name           = "aiff",
-    .long_name      = NULL_IF_CONFIG_SMALL("Audio IFF"),
+const FFInputFormat ff_aiff_demuxer = {
+    .p.name         = "aiff",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Audio IFF"),
+    .p.codec_tag    = ff_aiff_codec_tags_list,
     .priv_data_size = sizeof(AIFFInputContext),
     .read_probe     = aiff_probe,
     .read_header    = aiff_read_header,
     .read_packet    = aiff_read_packet,
     .read_seek      = ff_pcm_read_seek,
-    .codec_tag      = ff_aiff_codec_tags_list,
 };

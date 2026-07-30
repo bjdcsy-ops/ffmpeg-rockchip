@@ -29,13 +29,14 @@
 #include "libavutil/csp.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/internal.h"
+#include "libavutil/intfloat.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 
 #include "avfilter.h"
 #include "colorspace.h"
-#include "internal.h"
+#include "filters.h"
 #include "video.h"
 
 enum TonemapAlgorithm {
@@ -52,7 +53,8 @@ enum TonemapAlgorithm {
 typedef struct TonemapContext {
     const AVClass *class;
 
-    enum TonemapAlgorithm tonemap;
+    /* enum TonemapAlgorithm */
+    int tonemap;
     double param;
     double desat;
     double peak;
@@ -183,8 +185,8 @@ static int tonemap_slice(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs
     AVFrame *in = td->in;
     AVFrame *out = td->out;
     const AVPixFmtDescriptor *desc = td->desc;
-    const int slice_start = (in->height * jobnr) / nb_jobs;
-    const int slice_end = (in->height * (jobnr+1)) / nb_jobs;
+    const int slice_start = ff_slice_pos(in->height, jobnr, nb_jobs);
+    const int slice_end = ff_slice_pos(in->height, jobnr + 1, nb_jobs);
     double peak = td->peak;
 
     for (int y = slice_start; y < slice_end; y++)
@@ -226,26 +228,26 @@ static int filter_frame(AVFilterLink *link, AVFrame *in)
 
     /* input and output transfer will be linear */
     if (in->color_trc == AVCOL_TRC_UNSPECIFIED) {
-        av_log(s, AV_LOG_WARNING, "Untagged transfer, assuming linear light\n");
+        av_log(ctx, AV_LOG_WARNING, "Untagged transfer, assuming linear light\n");
         out->color_trc = AVCOL_TRC_LINEAR;
     } else if (in->color_trc != AVCOL_TRC_LINEAR)
-        av_log(s, AV_LOG_WARNING, "Tonemapping works on linear light only\n");
+        av_log(ctx, AV_LOG_WARNING, "Tonemapping works on linear light only\n");
 
     /* read peak from side data if not passed in */
     if (!peak) {
         peak = ff_determine_signal_peak(in);
-        av_log(s, AV_LOG_DEBUG, "Computed signal peak: %f\n", peak);
+        av_log(ctx, AV_LOG_DEBUG, "Computed signal peak: %f\n", peak);
     }
 
     /* load original color space even if pixel format is RGB to compute overbrights */
     s->coeffs = av_csp_luma_coeffs_from_avcsp(in->colorspace);
     if (s->desat > 0 && (in->colorspace == AVCOL_SPC_UNSPECIFIED || !s->coeffs)) {
         if (in->colorspace == AVCOL_SPC_UNSPECIFIED)
-            av_log(s, AV_LOG_WARNING, "Missing color space information, ");
+            av_log(ctx, AV_LOG_WARNING, "Missing color space information, ");
         else if (!s->coeffs)
-            av_log(s, AV_LOG_WARNING, "Unsupported color space '%s', ",
+            av_log(ctx, AV_LOG_WARNING, "Unsupported color space '%s', ",
                    av_color_space_name(in->colorspace));
-        av_log(s, AV_LOG_WARNING, "desaturation is disabled\n");
+        av_log(ctx, AV_LOG_WARNING, "desaturation is disabled\n");
         s->desat = 0;
     }
 
@@ -281,14 +283,14 @@ static int filter_frame(AVFilterLink *link, AVFrame *in)
 #define OFFSET(x) offsetof(TonemapContext, x)
 #define FLAGS AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_FILTERING_PARAM
 static const AVOption tonemap_options[] = {
-    { "tonemap",      "tonemap algorithm selection", OFFSET(tonemap), AV_OPT_TYPE_INT, {.i64 = TONEMAP_NONE}, TONEMAP_NONE, TONEMAP_MAX - 1, FLAGS, "tonemap" },
-    {     "none",     0, 0, AV_OPT_TYPE_CONST, {.i64 = TONEMAP_NONE},              0, 0, FLAGS, "tonemap" },
-    {     "linear",   0, 0, AV_OPT_TYPE_CONST, {.i64 = TONEMAP_LINEAR},            0, 0, FLAGS, "tonemap" },
-    {     "gamma",    0, 0, AV_OPT_TYPE_CONST, {.i64 = TONEMAP_GAMMA},             0, 0, FLAGS, "tonemap" },
-    {     "clip",     0, 0, AV_OPT_TYPE_CONST, {.i64 = TONEMAP_CLIP},              0, 0, FLAGS, "tonemap" },
-    {     "reinhard", 0, 0, AV_OPT_TYPE_CONST, {.i64 = TONEMAP_REINHARD},          0, 0, FLAGS, "tonemap" },
-    {     "hable",    0, 0, AV_OPT_TYPE_CONST, {.i64 = TONEMAP_HABLE},             0, 0, FLAGS, "tonemap" },
-    {     "mobius",   0, 0, AV_OPT_TYPE_CONST, {.i64 = TONEMAP_MOBIUS},            0, 0, FLAGS, "tonemap" },
+    { "tonemap",      "tonemap algorithm selection", OFFSET(tonemap), AV_OPT_TYPE_INT, {.i64 = TONEMAP_NONE}, TONEMAP_NONE, TONEMAP_MAX - 1, FLAGS, .unit = "tonemap" },
+    {     "none",     0, 0, AV_OPT_TYPE_CONST, {.i64 = TONEMAP_NONE},              0, 0, FLAGS, .unit = "tonemap" },
+    {     "linear",   0, 0, AV_OPT_TYPE_CONST, {.i64 = TONEMAP_LINEAR},            0, 0, FLAGS, .unit = "tonemap" },
+    {     "gamma",    0, 0, AV_OPT_TYPE_CONST, {.i64 = TONEMAP_GAMMA},             0, 0, FLAGS, .unit = "tonemap" },
+    {     "clip",     0, 0, AV_OPT_TYPE_CONST, {.i64 = TONEMAP_CLIP},              0, 0, FLAGS, .unit = "tonemap" },
+    {     "reinhard", 0, 0, AV_OPT_TYPE_CONST, {.i64 = TONEMAP_REINHARD},          0, 0, FLAGS, .unit = "tonemap" },
+    {     "hable",    0, 0, AV_OPT_TYPE_CONST, {.i64 = TONEMAP_HABLE},             0, 0, FLAGS, .unit = "tonemap" },
+    {     "mobius",   0, 0, AV_OPT_TYPE_CONST, {.i64 = TONEMAP_MOBIUS},            0, 0, FLAGS, .unit = "tonemap" },
     { "param",        "tonemap parameter", OFFSET(param), AV_OPT_TYPE_DOUBLE, {.dbl = NAN}, DBL_MIN, DBL_MAX, FLAGS },
     { "desat",        "desaturation strength", OFFSET(desat), AV_OPT_TYPE_DOUBLE, {.dbl = 2}, 0, DBL_MAX, FLAGS },
     { "peak",         "signal peak override", OFFSET(peak), AV_OPT_TYPE_DOUBLE, {.dbl = 0}, 0, DBL_MAX, FLAGS },
@@ -305,14 +307,14 @@ static const AVFilterPad tonemap_inputs[] = {
     },
 };
 
-const AVFilter ff_vf_tonemap = {
-    .name            = "tonemap",
-    .description     = NULL_IF_CONFIG_SMALL("Conversion to/from different dynamic ranges."),
+const FFFilter ff_vf_tonemap = {
+    .p.name          = "tonemap",
+    .p.description   = NULL_IF_CONFIG_SMALL("Conversion to/from different dynamic ranges."),
+    .p.priv_class    = &tonemap_class,
+    .p.flags         = AVFILTER_FLAG_SLICE_THREADS,
     .init            = init,
     .priv_size       = sizeof(TonemapContext),
-    .priv_class      = &tonemap_class,
     FILTER_INPUTS(tonemap_inputs),
     FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS(AV_PIX_FMT_GBRPF32, AV_PIX_FMT_GBRAPF32),
-    .flags           = AVFILTER_FLAG_SLICE_THREADS,
 };

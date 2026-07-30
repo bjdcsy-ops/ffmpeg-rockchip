@@ -74,6 +74,7 @@ typedef struct RKRGAContext {
 
     int (*filter_frame) (AVFilterLink *outlink, AVFrame *frame);
     enum AVPixelFormat  out_sw_format;
+    int                 out_reset_sar;
 
     RGAFrame           *src_frame_list;
     RGAFrame           *dst_frame_list;
@@ -107,6 +108,7 @@ typedef struct RKRGAParam {
     int (*filter_frame)(AVFilterLink *outlink, AVFrame *frame);
 
     enum AVPixelFormat out_sw_format;
+    int                out_reset_sar;
 
     int in_rotate_mode;
     int in_global_alpha;

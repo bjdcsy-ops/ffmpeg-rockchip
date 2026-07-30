@@ -1,4 +1,4 @@
-#! /bin/sh
+#!/bin/sh
 
 export LC_ALL=C
 
@@ -43,8 +43,17 @@ esac
 
 
 target_path(){
-    test ${1} = ${1#/} && p=${target_path}/
-    echo ${p}${1}
+    case ${1} in
+    [a-zA-Z]:/*)
+        echo ${1}
+        ;;
+    /*)
+        echo ${1}
+        ;;
+    *)
+        echo ${target_path}/${1}
+        ;;
+    esac
 }
 
 # $1=value1, $2=value2, $3=threshold
@@ -94,16 +103,30 @@ runecho(){
     $target_exec $target_path/"$@" >&3
 }
 
+run_with_temp(){
+    create_tmp=$1
+    process_tmp=$2
+    filext=$3
+    tmpfile=${outdir}/$test.$filext
+    cleanfiles="$cleanfiles $tmpfile"
+    run $create_tmp $tmpfile || return 1
+    run $process_tmp $tmpfile
+}
+
 probefmt(){
-    run ffprobe${PROGSUF}${EXECSUF} -bitexact -show_entries format=format_name -print_format default=nw=1:nk=1 "$@"
+    run ffprobe${PROGSUF}${EXECSUF} -bitexact -threads $threads -show_entries format=format_name -print_format default=nw=1:nk=1 "$@"
+}
+
+probecodec(){
+    run ffprobe${PROGSUF}${EXECSUF} -bitexact -threads $threads -show_entries stream=codec_name -print_format default=nw=1:nk=1 "$@"
 }
 
 probeaudiostream(){
-    run ffprobe${PROGSUF}${EXECSUF} -bitexact -show_entries stream=codec_name,codec_time_base,sample_fmt,channels,channel_layout:side_data "$@"
+    run ffprobe${PROGSUF}${EXECSUF} -bitexact -threads $threads -show_entries stream=codec_name,codec_time_base,sample_fmt,channels,channel_layout:side_data "$@"
 }
 
 probetags(){
-    run ffprobe${PROGSUF}${EXECSUF} -bitexact -show_entries format_tags "$@"
+    run ffprobe${PROGSUF}${EXECSUF} -bitexact -threads $threads -show_entries format_tags "$@"
 }
 
 runlocal(){
@@ -112,24 +135,28 @@ runlocal(){
 }
 
 probeframes(){
-    run ffprobe${PROGSUF}${EXECSUF} -bitexact -show_frames "$@"
+    run ffprobe${PROGSUF}${EXECSUF} -bitexact -threads $threads -show_frames "$@"
 }
 
 probechapters(){
-    run ffprobe${PROGSUF}${EXECSUF} -bitexact -show_chapters "$@"
+    run ffprobe${PROGSUF}${EXECSUF} -bitexact -threads $threads -show_chapters "$@"
+}
+
+probe(){
+    run ffprobe${PROGSUF}${EXECSUF} -bitexact -threads $threads "$@"
 }
 
 probegaplessinfo(){
     filename="$1"
     shift
-    run ffprobe${PROGSUF}${EXECSUF} -bitexact -select_streams a -show_entries format=start_time,duration:stream=index,start_pts,duration_ts "$filename" "$@"
+    run ffprobe${PROGSUF}${EXECSUF} -bitexact -threads $threads -select_streams a -show_entries format=start_time,duration:stream=index,start_pts,duration_ts "$filename" "$@"
     pktfile1="${outdir}/${test}.pkts"
     framefile1="${outdir}/${test}.frames"
     cleanfiles="$cleanfiles $pktfile1 $framefile1"
-    run ffprobe${PROGSUF}${EXECSUF} -bitexact -select_streams a -of compact -count_packets -show_entries packet=pts,dts,duration,flags:stream=nb_read_packets "$filename" "$@" > "$pktfile1"
+    run ffprobe${PROGSUF}${EXECSUF} -bitexact -threads $threads -select_streams a -of compact -count_packets -show_entries packet=pts,dts,duration,flags:stream=nb_read_packets "$filename" "$@" > "$pktfile1"
     head -n 8 "$pktfile1"
     tail -n 9 "$pktfile1"
-    run ffprobe${PROGSUF}${EXECSUF} -bitexact -select_streams a -of compact -count_frames -show_entries frame=pts,pkt_dts,best_effort_timestamp,pkt_duration,nb_samples:stream=nb_read_frames "$filename" "$@" > "$framefile1"
+    run ffprobe${PROGSUF}${EXECSUF} -bitexact -threads $threads -select_streams a -of compact -count_frames -show_entries frame=pts,pkt_dts,best_effort_timestamp,pkt_duration,nb_samples:stream=nb_read_frames "$filename" "$@" > "$framefile1"
     head -n 8 "$framefile1"
     tail -n 9 "$framefile1"
 }
@@ -149,7 +176,7 @@ ffprobe_demux(){
     shift
     print_filename=$(basename "$filename")
     run ffprobe${PROGSUF}${EXECSUF} -print_filename "${print_filename}" \
-        -of compact -bitexact -show_format -show_streams -show_packets  \
+        -of compact -bitexact -threads $threads -show_format -show_streams -show_packets  \
         -show_data_hash CRC32 "$filename" "$@"
 }
 
@@ -203,7 +230,8 @@ enc_dec_pcm(){
     ffmpeg -auto_conversion_filters -bitexact -i ${encfile} -c:a pcm_${pcm_fmt} -fflags +bitexact -f ${dec_fmt} -
 }
 
-FLAGS="-flags +bitexact -sws_flags +accurate_rnd+bitexact -fflags +bitexact"
+SCALE_FLAGS="+accurate_rnd+bitexact"
+FLAGS="-flags +bitexact -sws_flags $SCALE_FLAGS -fflags +bitexact"
 DEC_OPTS="-threads $threads -thread_type $thread_type -idct simple $FLAGS"
 ENC_OPTS="-threads 1        -idct simple -dct fastint"
 
@@ -243,8 +271,8 @@ enc_dec(){
         -f $dec_fmt_out -y $tdecfile || return
     do_md5sum $decfile
     tests/tiny_psnr${HOSTEXECSUF} $srcfile $decfile $cmp_unit $cmp_shift
-    test -z $ffprobe_opts || \
-        run ffprobe${PROGSUF}${EXECSUF} -bitexact $ffprobe_opts $tencfile || return
+    test -z "$ffprobe_opts" || \
+        run ffprobe${PROGSUF}${EXECSUF} -bitexact -threads $threads $ffprobe_opts $tencfile || return
 }
 
 transcode(){
@@ -257,7 +285,9 @@ transcode(){
     additional_input=$7
     final_decode=$8
     enc_opt_in=$9
+    final_encode_muxer="${10}"
     test -z "$additional_input" || additional_input="$DEC_OPTS $additional_input"
+    test -z "$final_encode_muxer" && final_encode_muxer="framecrc"
     encfile="${outdir}/${test}.${enc_fmt}"
     test $keep -ge 1 || cleanfiles="$cleanfiles $encfile"
     tsrcfile=$(target_path $srcfile)
@@ -267,9 +297,22 @@ transcode(){
     do_md5sum $encfile
     echo $(wc -c $encfile)
     ffmpeg $DEC_OPTS $final_decode -i $tencfile $ENC_OPTS $FLAGS $final_encode \
+        -f $final_encode_muxer - || return
+    test -z "$ffprobe_opts" || \
+        run ffprobe${PROGSUF}${EXECSUF} -bitexact -threads $threads $ffprobe_opts $tencfile || return
+}
+
+stream_demux(){
+    src_fmt=$1
+    srcfile=$2
+    src_opts=$3
+    enc_opts=$4
+    ffprobe_opts=$5
+    tsrcfile=$(target_path $srcfile)
+    ffmpeg $DEC_OPTS -f $src_fmt $src_opts -i $tsrcfile $ENC_OPTS $FLAGS $enc_opts \
         -f framecrc - || return
-    test -z $ffprobe_opts || \
-        run ffprobe${PROGSUF}${EXECSUF} -bitexact $ffprobe_opts $tencfile || return
+    test -z "$ffprobe_opts" || \
+        run ffprobe${PROGSUF}${EXECSUF} -bitexact -threads $threads $ffprobe_opts $tsrcfile || return
 }
 
 stream_remux(){
@@ -279,17 +322,18 @@ stream_remux(){
     enc_fmt=$4
     stream_maps=$5
     final_decode=$6
-    ffprobe_opts=$7
+    final_encode=$7
+    ffprobe_opts=$8
     encfile="${outdir}/${test}.${enc_fmt}"
     test $keep -ge 1 || cleanfiles="$cleanfiles $encfile"
     tsrcfile=$(target_path $srcfile)
     tencfile=$(target_path $encfile)
     ffmpeg -f $src_fmt $src_opts -i $tsrcfile $stream_maps -codec copy $FLAGS \
         -f $enc_fmt -y $tencfile || return
-    ffmpeg $DEC_OPTS -i $tencfile $ENC_OPTS $FLAGS $final_decode \
+    ffmpeg $DEC_OPTS $final_decode -i $tencfile $ENC_OPTS $FLAGS $final_encode \
         -f framecrc - || return
-    test -z $ffprobe_opts || \
-        run ffprobe${PROGSUF}${EXECSUF} -bitexact $ffprobe_opts $tencfile || return
+    test -z "$ffprobe_opts" || \
+        run ffprobe${PROGSUF}${EXECSUF} -bitexact -threads $threads $ffprobe_opts $tencfile || return
 }
 
 # this function is for testing external encoders,
@@ -303,9 +347,10 @@ enc_external(){
 
     srcfile=$(target_path $srcfile)
     encfile=$(target_path "${outdir}/${test}.${enc_fmt}")
+    test "$keep" -ge 1 || cleanfiles="$cleanfiles $encfile"
 
     ffmpeg -i $srcfile $enc_opt -f $enc_fmt -y $encfile || return
-    run ffprobe${PROGSUF}${EXECSUF} -bitexact $probe_opt $encfile || return
+    run ffprobe${PROGSUF}${EXECSUF} -bitexact -threads $threads $probe_opt $encfile || return
 }
 
 # FIXME: There is a certain duplication between the avconv-related helper
@@ -321,7 +366,7 @@ echov(){
 }
 
 AVCONV_OPTS="-nostdin -nostats -noauto_conversion_filters -y -cpuflags $cpuflags -filter_threads $threads"
-COMMON_OPTS="-flags +bitexact -idct simple -sws_flags +accurate_rnd+bitexact -fflags +bitexact"
+COMMON_OPTS="-flags +bitexact -idct simple -sws_flags $SCALE_FLAGS -fflags +bitexact"
 DEC_OPTS="$COMMON_OPTS -threads $threads"
 ENC_OPTS="$COMMON_OPTS -threads 1 -dct fastint"
 
@@ -334,7 +379,7 @@ do_avconv(){
     f="$1"
     shift
     set -- $* ${target_path}/$f
-    run_avconv $*
+    run_avconv $* || return
     do_md5sum $f
     echo $(wc -c $f)
 }
@@ -351,7 +396,8 @@ lavf_audio(){
     outdir="tests/data/lavf"
     file=${outdir}/lavf.$t
     test "$keep" -ge 1 || cleanfiles="$cleanfiles $file"
-    do_avconv $file -auto_conversion_filters $DEC_OPTS $1 -ar 44100 -f s16le -i $pcm_src "$ENC_OPTS -metadata title=lavftest" -t 1 -qscale 10 $2
+    do_avconv $file -auto_conversion_filters $DEC_OPTS $1 -ar 44100 -f s16le -i $pcm_src \
+              "$ENC_OPTS -metadata title=lavftest" -t 1 -qscale 10 $2 || return
     test "$4" = "disable_crc" ||
         do_avconv_crc $file -auto_conversion_filters $DEC_OPTS $3 -i $target_path/$file
 }
@@ -361,7 +407,8 @@ lavf_container(){
     outdir="tests/data/lavf"
     file=${outdir}/lavf.$t
     test "$keep" -ge 1 || cleanfiles="$cleanfiles $file"
-    do_avconv $file -auto_conversion_filters $DEC_OPTS -f image2 -c:v pgmyuv -i $raw_src $DEC_OPTS -ar 44100 -f s16le $1 -i $pcm_src "$ENC_OPTS -metadata title=lavftest" -b:a 64k -t 1 -qscale:v 10 $2
+    do_avconv $file -auto_conversion_filters $DEC_OPTS -f image2 -c:v pgmyuv -i $raw_src $DEC_OPTS \
+              -ar 44100 -f s16le $1 -i $pcm_src "$ENC_OPTS -metadata title=lavftest" -b:a 64k -t 1 -qscale:v 10 $2 || return
     test "$3" = "disable_crc" ||
         do_avconv_crc $file -auto_conversion_filters $DEC_OPTS -i $target_path/$file $3
 }
@@ -384,8 +431,9 @@ lavf_container_fate()
     file=${outdir}/lavf.$t
     cleanfiles="$cleanfiles $file"
     input="${target_samples}/$1"
-    do_avconv $file -auto_conversion_filters $DEC_OPTS $2 -i "$input" "$ENC_OPTS -metadata title=lavftest" -vcodec copy -acodec copy
-    do_avconv_crc $file -auto_conversion_filters $DEC_OPTS -i $target_path/$file $3
+    do_avconv $file -auto_conversion_filters $DEC_OPTS $2 -i "$input" \
+              "$ENC_OPTS -metadata title=lavftest" $3 -vcodec copy -acodec copy || return
+    do_avconv_crc $file -auto_conversion_filters $DEC_OPTS -i $target_path/$file $4
 }
 
 lavf_image(){
@@ -401,7 +449,9 @@ lavf_image(){
             cleanfiles="$cleanfiles $filename"
         done
     fi
-    run_avconv $DEC_OPTS -f image2 -c:v pgmyuv -i $raw_src $1 "$ENC_OPTS -metadata title=lavftest" -vf scale -frames $nb_frames -y -qscale 10 $target_path/$file
+    run_avconv $DEC_OPTS -f image2 -c:v pgmyuv -i $raw_src $1 \
+              "$ENC_OPTS -metadata title=lavftest" -vf scale -frames $nb_frames \
+              -y -qscale 10 $target_path/$file || return
     if [ -z "$no_file_checksums" ]; then
         do_md5sum ${outdir}/02.$t
         echo $(wc -c ${outdir}/02.$t)
@@ -414,7 +464,8 @@ lavf_image2pipe(){
     t="${t%pipe}"
     outdir="tests/data/lavf"
     file=${outdir}/${t}pipe.$t
-    do_avconv $file -auto_conversion_filters $DEC_OPTS -f image2 -c:v pgmyuv -i $raw_src -f image2pipe "$ENC_OPTS -metadata title=lavftest" -t 1 -qscale 10
+    do_avconv $file -auto_conversion_filters $DEC_OPTS -f image2 -c:v pgmyuv -i $raw_src \
+              -f image2pipe "$ENC_OPTS -metadata title=lavftest" -t 1 -qscale 10 || return
     do_avconv_crc $file -auto_conversion_filters $DEC_OPTS -f image2pipe -i $target_path/$file
 }
 
@@ -423,7 +474,8 @@ lavf_video(){
     outdir="tests/data/lavf"
     file=${outdir}/lavf.$t
     test "$keep" -ge 1 || cleanfiles="$cleanfiles $file"
-    do_avconv $file -auto_conversion_filters $DEC_OPTS -f image2 -c:v pgmyuv -i $raw_src "$ENC_OPTS -metadata title=lavftest" -t 1 -qscale 10 $1 $2
+    do_avconv $file -auto_conversion_filters $DEC_OPTS -f image2 -c:v pgmyuv -i $raw_src \
+              "$ENC_OPTS -metadata title=lavftest" -t 1 -qscale 10 $1 $2 || return
     do_avconv_crc $file -auto_conversion_filters $DEC_OPTS -i $target_path/$file $1
 }
 
@@ -477,9 +529,43 @@ pixfmt_conversion(){
     file=${outdir}/${conversion}.yuv
     cleanfiles="$cleanfiles $raw_dst $file"
     run_avconv $DEC_OPTS -r 1 -f image2 -c:v pgmyuv -i $raw_src \
-               $ENC_OPTS -f rawvideo -t 1 -s 352x288 -pix_fmt $conversion $target_path/$raw_dst
+               $ENC_OPTS -f rawvideo -t 1 -s 352x288 -pix_fmt $conversion $target_path/$raw_dst || return
     do_avconv $file $DEC_OPTS -f rawvideo -s 352x288 -pix_fmt $conversion -i $target_path/$raw_dst \
-              $ENC_OPTS -f rawvideo -s 352x288 -pix_fmt yuv444p
+              $ENC_OPTS -f rawvideo -s 352x288 -pix_fmt yuv444p -color_range mpeg
+}
+
+pixfmt_conversion_ext(){
+    prefix=$1
+    suffix=$2
+    color_range="${test#pixfmt-}"
+    color_range=${color_range%-*}
+    conversion="${test#pixfmt-$color_range-}"
+    outdir="tests/data/pixfmt"
+    file=${outdir}/${color_range}-${conversion}.yuv
+    cleanfiles="$cleanfiles $file"
+    do_avconv $file $DEC_OPTS -lavfi ${prefix}testsrc=s=352x288,format=${color_range},scale=flags=$SCALE_FLAGS:sws_dither=none,format=$conversion \
+              $ENC_OPTS -t 1 -f rawvideo -s 352x288 -pix_fmt ${color_range}${suffix} -color_range mpeg
+}
+
+pixdesc(){
+    pix_fmt=${test#filter-pixdesc-}
+    label=${test#filter-}
+    raw_src="${target_path}/tests/vsynth1/%02d.pgm"
+
+    md5file1="${outdir}/${test}-1.md5"
+    md5file2="${outdir}/${test}-2.md5"
+    cleanfiles="$cleanfiles $md5file1 $md5file2"
+
+    ffmpeg $DEC_OPTS -f image2 -vcodec pgmyuv -i $raw_src \
+        $FLAGS $ENC_OPTS -vf "scale,format=$pix_fmt" -vcodec rawvideo -frames:v 5 \
+        "-pix_fmt $pix_fmt" -f nut md5:$md5file1
+    ffmpeg $DEC_OPTS -f image2 -vcodec pgmyuv -i $raw_src \
+        $FLAGS $ENC_OPTS -vf "scale,format=$pix_fmt,pixdesctest" -vcodec rawvideo -frames:v 5 \
+        "-pix_fmt $pix_fmt" -f nut md5:$md5file2
+
+    diff -q $md5file1 $md5file2 || return
+    printf '%-20s' $label
+    cat $md5file1
 }
 
 video_filter(){
@@ -516,7 +602,7 @@ pixfmts(){
     outertest=$test
     for pix_fmt in $pix_fmts; do
         test=$pix_fmt
-        video_filter "${prefilter_chain}scale,format=$pix_fmt,$filter=$filter_args" -pix_fmt $pix_fmt -frames:v $nframes
+        video_filter "${prefilter_chain}scale,format=$pix_fmt,$filter=$filter_args" -pix_fmt $pix_fmt -frames:v $nframes || return
     done
 
     rm $in_fmts $scale_in_fmts $scale_out_fmts $scale_exclude_fmts
@@ -533,16 +619,20 @@ gapless(){
     cleanfiles="$cleanfiles $decfile1 $decfile2 $decfile3"
 
     # test packet data
-    ffmpeg -auto_conversion_filters $extra_args -i "$sample" -bitexact -c:a copy -f framecrc -y $(target_path $decfile1)
+    ffmpeg -auto_conversion_filters $extra_args -i "$sample" \
+           -bitexact -c:a copy -f framecrc -y $(target_path $decfile1) || return
     do_md5sum $decfile1
     # test decoded (and cut) data
-    ffmpeg -auto_conversion_filters $extra_args -i "$sample" -bitexact -f wav md5:
+    ffmpeg -auto_conversion_filters $extra_args -i "$sample" -bitexact -f wav md5: || return
     # the same as above again, with seeking to the start
-    ffmpeg -auto_conversion_filters $extra_args -ss 0 -seek_timestamp 1 -i "$sample" -bitexact -c:a copy -f framecrc -y $(target_path $decfile2)
+    ffmpeg -auto_conversion_filters $extra_args -ss 0 -seek_timestamp 1 -i "$sample" \
+           -bitexact -c:a copy -f framecrc -y $(target_path $decfile2) || return
     do_md5sum $decfile2
-    ffmpeg -auto_conversion_filters $extra_args -ss 0 -seek_timestamp 1 -i "$sample" -bitexact -f wav md5:
+    ffmpeg -auto_conversion_filters $extra_args -ss 0 -seek_timestamp 1 -i "$sample" \
+           -bitexact -f wav md5: || return
     # test packet data, with seeking to a specific position
-    ffmpeg -auto_conversion_filters $extra_args -ss 5 -seek_timestamp 1 -i "$sample" -bitexact -c:a copy -f framecrc -y $(target_path $decfile3)
+    ffmpeg -auto_conversion_filters $extra_args -ss 5 -seek_timestamp 1 -i "$sample" \
+           -bitexact -c:a copy -f framecrc -y $(target_path $decfile3) || return
     do_md5sum $decfile3
 }
 
@@ -555,7 +645,8 @@ gaplessenc(){
     cleanfiles="$cleanfiles $file1"
 
     # test data after reencoding
-    ffmpeg -i "$sample" -bitexact -map 0:a -c:a $codec -af aresample -f $format -y "$(target_path "$file1")"
+    ffmpeg -i "$sample" -bitexact -map 0:a -c:a $codec -af aresample \
+           -f $format -y "$(target_path "$file1")" || return
     probegaplessinfo "$(target_path "$file1")"
 }
 
@@ -567,7 +658,7 @@ audio_match(){
     decfile="${outdir}/${test}.wav"
     cleanfiles="$cleanfiles $decfile"
 
-    ffmpeg -auto_conversion_filters -i "$sample" -bitexact $extra_args -y $(target_path $decfile)
+    ffmpeg -auto_conversion_filters -i "$sample" -bitexact $extra_args -y $(target_path $decfile) || return
     tests/audiomatch${HOSTEXECSUF} $decfile $trefile
 }
 
@@ -584,10 +675,10 @@ concat(){
     awk "{gsub(/%SRCFILE%/, \"$sample\"); print}" $template > $concatfile
 
     if [ "$mode" = "md5" ]; then
-        run ffprobe${PROGSUF}${EXECSUF} -bitexact -show_streams -show_packets -safe 0 $extra_args $(target_path $concatfile) | tr -d '\r' > $packetfile
+        run ffprobe${PROGSUF}${EXECSUF} -bitexact -threads $threads -show_streams -show_packets -safe 0 $extra_args $(target_path $concatfile) | tr -d '\r' > $packetfile
         do_md5sum $packetfile
     else
-        run ffprobe${PROGSUF}${EXECSUF} -bitexact -show_streams -show_packets -of compact=p=0:nk=1 -safe 0 $extra_args $(target_path $concatfile)
+        run ffprobe${PROGSUF}${EXECSUF} -bitexact -threads $threads -show_streams -show_packets -of compact=p=0:nk=1 -safe 0 $extra_args $(target_path $concatfile)
     fi
 }
 
@@ -646,7 +737,7 @@ else
 fi
 echo "${test}:${sig:-$err}:$cmpo:$erro" >$repfile
 
-if test $err != 0 && test $gen != "no" ; then
+if test $err != 0 && test $gen != "no" && test "${ref#tests/data/}" = "$ref" ; then
     echo "GEN     $ref"
     cp -f "$outfile" "$ref"
     err=$?

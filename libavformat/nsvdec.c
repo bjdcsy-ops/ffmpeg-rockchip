@@ -23,7 +23,9 @@
 
 #include "libavutil/attributes.h"
 #include "libavutil/mathematics.h"
+#include "libavutil/mem.h"
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
 #include "libavutil/dict.h"
 #include "libavutil/intreadwrite.h"
@@ -70,7 +72,7 @@
  * so the header seems to not be mandatory. (for streaming).
  *
  * index slice duration check (excepts nsvtrailer.nsv):
- * for f in [^n]*.nsv; do DUR="$(ffmpeg -i "$f" 2>/dev/null | grep 'NSVf duration' | cut -d ' ' -f 4)"; IC="$(ffmpeg -i "$f" 2>/dev/null | grep 'INDEX ENTRIES' | cut -d ' ' -f 2)"; echo "duration $DUR, slite time $(($DUR/$IC))"; done
+ * for f in [^n]*.nsv; do DUR="$(ffmpeg -i "$f" 2>/dev/null | grep 'NSVf duration' | cut -d ' ' -f 4)"; IC="$(ffmpeg -i "$f" 2>/dev/null | grep 'INDEX ENTRIES' | cut -d ' ' -f 2)"; echo "duration $DUR, slice time $(($DUR/$IC))"; done
  */
 
 /*
@@ -260,7 +262,7 @@ static int nsv_parse_NSVf_header(AVFormatContext *s)
 {
     NSVContext *nsv = s->priv_data;
     AVIOContext *pb = s->pb;
-    unsigned int av_unused file_size;
+    av_unused unsigned int file_size;
     unsigned int size;
     int64_t duration;
     int strings_size;
@@ -576,7 +578,7 @@ null_chunk_retry:
     av_log(s, AV_LOG_TRACE, "NSV CHUNK %d aux, %"PRIu32" bytes video, %d bytes audio\n", auxcount, vsize, asize);
     /* skip aux stuff */
     for (i = 0; i < auxcount; i++) {
-        uint32_t av_unused auxtag;
+        av_unused uint32_t auxtag;
         auxsize = avio_rl16(pb);
         auxtag = avio_rl32(pb);
         avio_skip(pb, auxsize);
@@ -615,7 +617,7 @@ null_chunk_retry:
         pkt = &nsv->ahead[NSV_ST_AUDIO];
         /* read raw audio specific header on the first audio chunk... */
         /* on ALL audio chunks ?? seems so! */
-        if (asize && st[NSV_ST_AUDIO]->codecpar->codec_tag == MKTAG('P', 'C', 'M', ' ')/* && fill_header*/) {
+        if (asize >= 4 && st[NSV_ST_AUDIO]->codecpar->codec_tag == MKTAG('P', 'C', 'M', ' ')/* && fill_header*/) {
             uint8_t bps;
             uint8_t channels;
             uint16_t samplerate;
@@ -747,11 +749,11 @@ static int nsv_probe(const AVProbeData *p)
     return score;
 }
 
-const AVInputFormat ff_nsv_demuxer = {
-    .name           = "nsv",
-    .long_name      = NULL_IF_CONFIG_SMALL("Nullsoft Streaming Video"),
+const FFInputFormat ff_nsv_demuxer = {
+    .p.name         = "nsv",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Nullsoft Streaming Video"),
     .priv_data_size = sizeof(NSVContext),
-    .flags_internal = FF_FMT_INIT_CLEANUP,
+    .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
     .read_probe     = nsv_probe,
     .read_header    = nsv_read_header,
     .read_packet    = nsv_read_packet,

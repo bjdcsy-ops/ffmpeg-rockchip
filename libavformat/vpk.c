@@ -21,6 +21,7 @@
 
 #include "libavutil/intreadwrite.h"
 #include "avformat.h"
+#include "avio_internal.h"
 #include "demux.h"
 #include "internal.h"
 
@@ -94,10 +95,10 @@ static int vpk_read_packet(AVFormatContext *s, AVPacket *pkt)
         if (ret < 0)
             return ret;
         for (i = 0; i < par->ch_layout.nb_channels; i++) {
-            ret = avio_read(s->pb, pkt->data + i * size, size);
+            ret = ffio_read_size(s->pb, pkt->data + i * size, size);
             avio_skip(s->pb, skip);
-            if (ret != size) {
-                return AVERROR(EIO);
+            if (ret < 0) {
+                return ret;
             }
         }
         pkt->pos = pos;
@@ -135,13 +136,13 @@ static int vpk_read_seek(AVFormatContext *s, int stream_index,
     return 0;
 }
 
-const AVInputFormat ff_vpk_demuxer = {
-    .name           = "vpk",
-    .long_name      = NULL_IF_CONFIG_SMALL("Sony PS2 VPK"),
+const FFInputFormat ff_vpk_demuxer = {
+    .p.name         = "vpk",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Sony PS2 VPK"),
+    .p.extensions   = "vpk",
     .priv_data_size = sizeof(VPKDemuxContext),
     .read_probe     = vpk_probe,
     .read_header    = vpk_read_header,
     .read_packet    = vpk_read_packet,
     .read_seek      = vpk_read_seek,
-    .extensions     = "vpk",
 };

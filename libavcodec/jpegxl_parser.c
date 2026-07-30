@@ -32,6 +32,7 @@
 
 #include "bytestream.h"
 #include "codec_id.h"
+#include "parser_internal.h"
 #define UNCHECKED_BITSTREAM_READER 0
 #define BITSTREAM_READER_LE
 #include "get_bits.h"
@@ -155,14 +156,14 @@ typedef struct JXLParseContext {
 
     /* using ISOBMFF-based container */
     int container;
-    int skip;
+    int64_t skip;
     int copied;
-    int collected_size;
-    int codestream_length;
+    int64_t collected_size;
+    int64_t codestream_length;
     int skipped_icc;
-    int next;
+    int64_t next;
 
-    uint8_t cs_buffer[4096];
+    uint8_t cs_buffer[4096 + AV_INPUT_BUFFER_PADDING_SIZE];
 } JXLParseContext;
 
 /* used for reading brotli prefixes */
@@ -352,6 +353,8 @@ static int decode_hybrid_varlen_uint(GetBitContext *gb, JXLEntropyDecoder *dec,
 
     if (bundle->lz77_enabled && token >= bundle->lz77_min_symbol) {
         const JXLSymbolDistribution *lz77dist = &bundle->dists[bundle->cluster_map[bundle->num_dist - 1]];
+        if (!dec->num_decoded)
+            return AVERROR_INVALIDDATA;
         ret = read_hybrid_uint(gb, &bundle->lz_len_conf, token - bundle->lz77_min_symbol, &dec->num_to_copy);
         if (ret < 0)
             return ret;
@@ -531,6 +534,7 @@ static int read_dist_clustering(GetBitContext *gb, JXLEntropyDecoder *dec, JXLDi
         dec->state = -1;
         /* it's not going to necessarily be zero after reading */
         dec->num_to_copy = 0;
+        dec->num_decoded = 0;
         dist_bundle_close(&nested);
         if (use_mtf) {
             uint8_t mtf[256];
@@ -708,6 +712,10 @@ static int read_vlc_prefix(GetBitContext *gb, JXLEntropyDecoder *dec, JXLSymbolD
     level1_codecounts[0] = hskip;
     for (int i = hskip; i < 18; i++) {
         len = level1_lens[prefix_codelen_map[i]] = get_vlc2(gb, level0_table, 4, 1);
+        if (len < 0) {
+            ret = AVERROR_INVALIDDATA;
+            goto end;
+        }
         level1_codecounts[len]++;
         if (len) {
             total_code += (32 >> len);
@@ -753,6 +761,10 @@ static int read_vlc_prefix(GetBitContext *gb, JXLEntropyDecoder *dec, JXLSymbolD
     total_code = 0;
     for (int i = 0; i < dist->alphabet_size; i++) {
         len = get_vlc2(gb, level1_vlc.table, 5, 1);
+        if (len < 0) {
+            ret = AVERROR_INVALIDDATA;
+            goto end;
+        }
         if (get_bits_left(gb) < 0) {
             ret = AVERROR_BUFFER_TOO_SMALL;
             goto end;
@@ -1063,6 +1075,11 @@ static void populate_fields(AVCodecParserContext *s, AVCodecContext *avctx, cons
         else
             s->format = meta->have_alpha ? AV_PIX_FMT_RGBAF32 : AV_PIX_FMT_RGBF32;
     }
+
+    if (meta->have_alpha) {
+        avctx->alpha_mode = meta->alpha_associated ? AVALPHA_MODE_PREMULTIPLIED
+                                                   : AVALPHA_MODE_STRAIGHT;
+    }
 }
 
 static int skip_icc_profile(void *avctx, JXLParseContext *ctx, GetBitContext *gb)
@@ -1303,7 +1320,14 @@ static int parse_frame_header(void *avctx, JXLParseContext *ctx, GetBitContext *
     // permuted toc
     if (get_bits1(gb)) {
         JXLEntropyDecoder dec;
-        uint32_t end, lehmer = 0;
+        int64_t end, lehmer = 0;
+        /* parser sanity check to prevent TOC perm from spinning cpu */
+        if (width > meta->coded_width * 8 || height > meta->coded_height * 8) {
+            av_log(avctx, AV_LOG_WARNING, "frame of size %" PRIu32 "x%" PRIu32
+                " exceeds max size of %" PRIu32 "x%" PRIu32 ", aborting parser\n",
+                width, height, meta->coded_width * 8, meta->coded_height * 8);
+            return AVERROR_INVALIDDATA;
+        }
         ret = entropy_decoder_init(avctx, gb, &dec, 8);
         if (ret < 0)
             return ret;
@@ -1312,15 +1336,15 @@ static int parse_frame_header(void *avctx, JXLParseContext *ctx, GetBitContext *
             return AVERROR_BUFFER_TOO_SMALL;
         }
         end = entropy_decoder_read_symbol(gb, &dec, toc_context(toc_count));
-        if (end > toc_count) {
+        if (end < 0 || end > toc_count) {
             entropy_decoder_close(&dec);
             return AVERROR_INVALIDDATA;
         }
         for (uint32_t i = 0; i < end; i++) {
             lehmer = entropy_decoder_read_symbol(gb, &dec, toc_context(lehmer));
-            if (get_bits_left(gb) < 0) {
+            if (lehmer < 0 || get_bits_left(gb) < 0) {
                 entropy_decoder_close(&dec);
-                return AVERROR_BUFFER_TOO_SMALL;
+                return lehmer < 0 ? lehmer : AVERROR_BUFFER_TOO_SMALL;
             }
         }
         entropy_decoder_close(&dec);
@@ -1352,7 +1376,7 @@ static int skip_boxes(JXLParseContext *ctx, const uint8_t *buf, int buf_size)
 
     while (1) {
         uint64_t size;
-        int head_size = 4;
+        int head_size = 8;
 
         if (bytestream2_peek_le16(&gb) == FF_JPEGXL_CODESTREAM_SIGNATURE_LE)
             break;
@@ -1363,16 +1387,17 @@ static int skip_boxes(JXLParseContext *ctx, const uint8_t *buf, int buf_size)
             return AVERROR_BUFFER_TOO_SMALL;
 
         size = bytestream2_get_be32(&gb);
+        bytestream2_skip(&gb, 4); // tag
         if (size == 1) {
-            if (bytestream2_get_bytes_left(&gb) < 12)
+            if (bytestream2_get_bytes_left(&gb) < 8)
                 return AVERROR_BUFFER_TOO_SMALL;
             size = bytestream2_get_be64(&gb);
-            head_size = 12;
+            head_size = 16;
         }
         if (!size)
             return AVERROR_INVALIDDATA;
         /* invalid ISOBMFF size */
-        if (size <= head_size + 4 || size > INT_MAX - ctx->skip)
+        if (size <= head_size || size > INT_MAX - ctx->skip)
             return AVERROR_INVALIDDATA;
 
         ctx->skip += size;
@@ -1384,7 +1409,7 @@ static int skip_boxes(JXLParseContext *ctx, const uint8_t *buf, int buf_size)
     return 0;
 }
 
-static int try_parse(AVCodecParserContext *s, AVCodecContext *avctx, JXLParseContext *ctx,
+static int64_t try_parse(AVCodecParserContext *s, AVCodecContext *avctx, JXLParseContext *ctx,
                      const uint8_t *buf, int buf_size)
 {
     int ret, cs_buflen, header_skip;
@@ -1400,7 +1425,7 @@ static int try_parse(AVCodecParserContext *s, AVCodecContext *avctx, JXLParseCon
     if (ctx->container || AV_RL64(buf) == FF_JPEGXL_CONTAINER_SIGNATURE_LE) {
         ctx->container = 1;
         ret = ff_jpegxl_collect_codestream_header(buf, buf_size, ctx->cs_buffer,
-                                                  sizeof(ctx->cs_buffer), &ctx->copied);
+                                                  sizeof(ctx->cs_buffer) - AV_INPUT_BUFFER_PADDING_SIZE, &ctx->copied);
         if (ret < 0)
             return ret;
         ctx->collected_size = ret;
@@ -1409,7 +1434,7 @@ static int try_parse(AVCodecParserContext *s, AVCodecContext *avctx, JXLParseCon
             return AVERROR_BUFFER_TOO_SMALL;
         }
         cs_buffer = ctx->cs_buffer;
-        cs_buflen = FFMIN(sizeof(ctx->cs_buffer), ctx->copied);
+        cs_buflen = FFMIN(sizeof(ctx->cs_buffer) - AV_INPUT_BUFFER_PADDING_SIZE, ctx->copied);
     } else {
         cs_buffer = buf;
         cs_buflen = buf_size;
@@ -1463,24 +1488,30 @@ static int jpegxl_parse(AVCodecParserContext *s, AVCodecContext *avctx,
 {
     JXLParseContext *ctx = s->priv_data;
     int next = END_NOT_FOUND, ret;
+    const uint8_t *pbuf = ctx->pc.buffer;
+    int pindex = ctx->pc.index;
 
     *poutbuf_size = 0;
     *poutbuf = NULL;
 
-    if (!ctx->pc.index)
-        goto flush;
+    if (!ctx->pc.index) {
+        if (ctx->pc.overread)
+            goto flush;
+        pbuf = buf;
+        pindex = buf_size;
+    }
 
     if ((!ctx->container || !ctx->codestream_length) && !ctx->next) {
-        ret = try_parse(s, avctx, ctx, ctx->pc.buffer, ctx->pc.index);
-        if (ret < 0)
+        int64_t ret64 = try_parse(s, avctx, ctx, pbuf, pindex);
+        if (ret64 < 0)
             goto flush;
-        ctx->next = ret;
+        ctx->next = ret64;
         if (ctx->container)
             ctx->skip += ctx->next;
     }
 
     if (ctx->container && ctx->next >= 0) {
-        ret = skip_boxes(ctx, ctx->pc.buffer, ctx->pc.index);
+        ret = skip_boxes(ctx, pbuf, pindex);
         if (ret < 0) {
             if (ret == AVERROR_INVALIDDATA)
                 ctx->next = -1;
@@ -1515,9 +1546,9 @@ flush:
     return next;
 }
 
-const AVCodecParser ff_jpegxl_parser = {
-    .codec_ids      = { AV_CODEC_ID_JPEGXL },
+const FFCodecParser ff_jpegxl_parser = {
+    PARSER_CODEC_LIST(AV_CODEC_ID_JPEGXL, AV_CODEC_ID_JPEGXL_ANIM),
     .priv_data_size = sizeof(JXLParseContext),
-    .parser_parse   = jpegxl_parse,
-    .parser_close   = ff_parse_close,
+    .parse          = jpegxl_parse,
+    .close          = ff_parse_close,
 };

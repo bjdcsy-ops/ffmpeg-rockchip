@@ -1039,7 +1039,9 @@ av_cold void ff_vc1dsp_init(VC1DSPContext *dsp)
     ff_vc1dsp_init_arm(dsp);
 #elif ARCH_PPC
     ff_vc1dsp_init_ppc(dsp);
-#elif ARCH_X86
+#elif ARCH_RISCV
+    ff_vc1dsp_init_riscv(dsp);
+#elif ARCH_X86 && HAVE_X86ASM
     ff_vc1dsp_init_x86(dsp);
 #elif ARCH_MIPS
     ff_vc1dsp_init_mips(dsp);

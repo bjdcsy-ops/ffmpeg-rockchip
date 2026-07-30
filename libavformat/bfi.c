@@ -131,7 +131,7 @@ static int bfi_read_packet(AVFormatContext * s, AVPacket * pkt)
         uint32_t state = 0;
         while(state != MKTAG('S','A','V','I')){
             if (avio_feof(pb))
-                return AVERROR(EIO);
+                return AVERROR_INVALIDDATA;
             state = 256*state + avio_r8(pb);
         }
         /* Now that the chunk's location is confirmed, we proceed... */
@@ -176,9 +176,9 @@ static int bfi_read_packet(AVFormatContext * s, AVPacket * pkt)
     return ret;
 }
 
-const AVInputFormat ff_bfi_demuxer = {
-    .name           = "bfi",
-    .long_name      = NULL_IF_CONFIG_SMALL("Brute Force & Ignorance"),
+const FFInputFormat ff_bfi_demuxer = {
+    .p.name         = "bfi",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Brute Force & Ignorance"),
     .priv_data_size = sizeof(BFIContext),
     .read_probe     = bfi_probe,
     .read_header    = bfi_read_header,

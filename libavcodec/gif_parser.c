@@ -26,6 +26,7 @@
 
 #include "gif.h"
 #include "parser.h"
+#include "parser_internal.h"
 
 typedef enum GIFParseStates {
     GIF_HEADER = 1,
@@ -67,6 +68,17 @@ static int gif_find_frame_end(GIFParseContext *g, const uint8_t *buf,
                 g->state = GIF_EXTENSION;
                 g->found_start = pc->frame_start_found = 1;
             } else if (buf[index] == GIF_IMAGE_SEPARATOR) {
+                if (g->state != GIF_EXTENSION_BLOCK && g->found_start &&
+                    g->found_end && g->found_sig) {
+                    next = index;
+                    g->found_start = pc->frame_start_found = 1;
+                    g->found_end = 0;
+                    g->index = 0;
+                    g->gct_flag = 0;
+                    g->gct_size = 0;
+                    g->state = GIF_IMAGE;
+                    break;
+                }
                 g->state = GIF_IMAGE;
             } else if (buf[index] == GIF_TRAILER) {
                 g->state = 0;
@@ -189,9 +201,9 @@ static int gif_parse(AVCodecParserContext *s, AVCodecContext *avctx,
     return next;
 }
 
-const AVCodecParser ff_gif_parser = {
-    .codec_ids      = { AV_CODEC_ID_GIF },
+const FFCodecParser ff_gif_parser = {
+    PARSER_CODEC_LIST(AV_CODEC_ID_GIF),
     .priv_data_size = sizeof(GIFParseContext),
-    .parser_parse   = gif_parse,
-    .parser_close   = ff_parse_close,
+    .parse          = gif_parse,
+    .close          = ff_parse_close,
 };

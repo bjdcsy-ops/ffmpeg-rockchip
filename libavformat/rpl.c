@@ -25,6 +25,7 @@
 #include "libavutil/avstring.h"
 #include "libavutil/dict.h"
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
 
 #define RPL_SIGNATURE "ARMovie\x0A"
@@ -101,7 +102,7 @@ static AVRational read_fps(const char* line, int* error)
         line++;
     for (; *line>='0' && *line<='9'; line++) {
         // Truncate any numerator too large to fit into an int64_t
-        if (num > (INT64_MAX - 9) / 10 || den > INT64_MAX / 10)
+        if (num > (INT64_MAX - 9) / 10ULL || den > INT64_MAX / 10ULL)
             break;
         num  = 10 * num + (*line - '0');
         den *= 10;
@@ -117,7 +118,7 @@ static int rpl_read_header(AVFormatContext *s)
     AVIOContext *pb = s->pb;
     RPLContext *rpl = s->priv_data;
     AVStream *vst = NULL, *ast = NULL;
-    int total_audio_size;
+    int64_t total_audio_size;
     int error = 0;
     const char *endptr;
     char audio_type[RPL_LINE_LENGTH];
@@ -201,7 +202,11 @@ static int rpl_read_header(AVFormatContext *s)
         ast->codecpar->codec_type      = AVMEDIA_TYPE_AUDIO;
         ast->codecpar->codec_tag       = audio_format;
         ast->codecpar->sample_rate     = read_line_and_int(pb, &error);  // audio bitrate
+        if (ast->codecpar->sample_rate < 0)
+            return AVERROR_INVALIDDATA;
         channels                       = read_line_and_int(pb, &error);  // number of audio channels
+        if (channels <= 0)
+            return AVERROR_INVALIDDATA;
         error |= read_line(pb, line, sizeof(line));
         ast->codecpar->bits_per_coded_sample = read_int(line, &endptr, &error);  // audio bits per sample
         av_strlcpy(audio_type, endptr, RPL_LINE_LENGTH);
@@ -245,7 +250,7 @@ static int rpl_read_header(AVFormatContext *s)
                     // are all unsigned.
                     ast->codecpar->codec_id = AV_CODEC_ID_PCM_U8;
                 } else if (ast->codecpar->bits_per_coded_sample == 4) {
-                    ast->codecpar->codec_id = AV_CODEC_ID_ADPCM_IMA_EA_SEAD;
+                    ast->codecpar->codec_id = AV_CODEC_ID_ADPCM_IMA_ESCAPE;
                 }
                 break;
         }
@@ -302,11 +307,13 @@ static int rpl_read_header(AVFormatContext *s)
         if (ast)
             av_add_index_entry(ast, offset + video_size, total_audio_size,
                                audio_size, audio_size * 8, 0);
+        if (total_audio_size/8 + (uint64_t)audio_size >= INT64_MAX/8)
+            return AVERROR_INVALIDDATA;
         total_audio_size += audio_size * 8;
     }
 
     if (error)
-        return AVERROR(EIO);
+        return AVERROR_INVALIDDATA;
 
     return 0;
 }
@@ -334,8 +341,9 @@ static int rpl_read_packet(AVFormatContext *s, AVPacket *pkt)
     index_entry = &sti->index_entries[rpl->chunk_number];
 
     if (rpl->frame_in_part == 0) {
-        if (avio_seek(pb, index_entry->pos, SEEK_SET) < 0)
-            return AVERROR(EIO);
+        int64_t ret64 = avio_seek(pb, index_entry->pos, SEEK_SET);
+        if (ret64 < 0)
+            return (int)ret64;
     }
 
     if (stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO &&
@@ -343,17 +351,20 @@ static int rpl_read_packet(AVFormatContext *s, AVPacket *pkt)
         // We have to split Escape 124 frames because there are
         // multiple frames per chunk in Escape 124 samples.
         uint32_t frame_size;
+        int64_t ret64;
 
         avio_skip(pb, 4); /* flags */
         frame_size = avio_rl32(pb);
-        if (avio_feof(pb) || avio_seek(pb, -8, SEEK_CUR) < 0 || !frame_size)
-            return AVERROR(EIO);
+        if (avio_feof(pb) || !frame_size)
+            return AVERROR_INVALIDDATA;
+        if ((ret64 = avio_seek(pb, -8, SEEK_CUR)) < 0)
+            return (int)ret64;
 
         ret = av_get_packet(pb, pkt, frame_size);
         if (ret < 0)
             return ret;
         if (ret != frame_size)
-            return AVERROR(EIO);
+            return AVERROR_INVALIDDATA;
 
         pkt->duration = 1;
         pkt->pts = index_entry->timestamp + rpl->frame_in_part;
@@ -369,7 +380,7 @@ static int rpl_read_packet(AVFormatContext *s, AVPacket *pkt)
         if (ret < 0)
             return ret;
         if (ret != index_entry->size)
-            return AVERROR(EIO);
+            return AVERROR_INVALIDDATA;
 
         if (stream->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
             // frames_per_chunk should always be one here; the header
@@ -393,9 +404,9 @@ static int rpl_read_packet(AVFormatContext *s, AVPacket *pkt)
     return ret;
 }
 
-const AVInputFormat ff_rpl_demuxer = {
-    .name           = "rpl",
-    .long_name      = NULL_IF_CONFIG_SMALL("RPL / ARMovie"),
+const FFInputFormat ff_rpl_demuxer = {
+    .p.name         = "rpl",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("RPL / ARMovie"),
     .priv_data_size = sizeof(RPLContext),
     .read_probe     = rpl_probe,
     .read_header    = rpl_read_header,

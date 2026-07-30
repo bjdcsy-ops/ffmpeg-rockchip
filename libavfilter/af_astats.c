@@ -22,10 +22,11 @@
 #include <float.h>
 #include <math.h>
 
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "audio.h"
 #include "avfilter.h"
-#include "internal.h"
+#include "filters.h"
 
 #define HISTOGRAM_SIZE                  8192
 #define HISTOGRAM_MAX                   (HISTOGRAM_SIZE-1)
@@ -122,36 +123,36 @@ static const AVOption astats_options[] = {
     { "length", "set the window length", OFFSET(time_constant), AV_OPT_TYPE_DOUBLE, {.dbl=.05}, 0, 10, FLAGS },
     { "metadata", "inject metadata in the filtergraph", OFFSET(metadata), AV_OPT_TYPE_BOOL, {.i64=0}, 0, 1, FLAGS },
     { "reset", "Set the number of frames over which cumulative stats are calculated before being reset", OFFSET(reset_count), AV_OPT_TYPE_INT, {.i64=0}, 0, INT_MAX, FLAGS },
-    { "measure_perchannel", "Select the parameters which are measured per channel", OFFSET(measure_perchannel), AV_OPT_TYPE_FLAGS, {.i64=MEASURE_ALL}, 0, UINT_MAX, FLAGS, "measure" },
-      { "none"                      , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_NONE                }, 0, 0, FLAGS, "measure" },
-      { "all"                       , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_ALL                 }, 0, 0, FLAGS, "measure" },
-      { "Bit_depth"                 , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_BIT_DEPTH           }, 0, 0, FLAGS, "measure" },
-      { "Crest_factor"              , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_CREST_FACTOR        }, 0, 0, FLAGS, "measure" },
-      { "DC_offset"                 , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_DC_OFFSET           }, 0, 0, FLAGS, "measure" },
-      { "Dynamic_range"             , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_DYNAMIC_RANGE       }, 0, 0, FLAGS, "measure" },
-      { "Entropy"                   , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_ENTROPY             }, 0, 0, FLAGS, "measure" },
-      { "Flat_factor"               , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_FLAT_FACTOR         }, 0, 0, FLAGS, "measure" },
-      { "Max_difference"            , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_MAX_DIFFERENCE      }, 0, 0, FLAGS, "measure" },
-      { "Max_level"                 , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_MAX_LEVEL           }, 0, 0, FLAGS, "measure" },
-      { "Mean_difference"           , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_MEAN_DIFFERENCE     }, 0, 0, FLAGS, "measure" },
-      { "Min_difference"            , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_MIN_DIFFERENCE      }, 0, 0, FLAGS, "measure" },
-      { "Min_level"                 , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_MIN_LEVEL           }, 0, 0, FLAGS, "measure" },
-      { "Noise_floor"               , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_NOISE_FLOOR         }, 0, 0, FLAGS, "measure" },
-      { "Noise_floor_count"         , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_NOISE_FLOOR_COUNT   }, 0, 0, FLAGS, "measure" },
-      { "Number_of_Infs"            , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_NUMBER_OF_INFS      }, 0, 0, FLAGS, "measure" },
-      { "Number_of_NaNs"            , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_NUMBER_OF_NANS      }, 0, 0, FLAGS, "measure" },
-      { "Number_of_denormals"       , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_NUMBER_OF_DENORMALS }, 0, 0, FLAGS, "measure" },
-      { "Number_of_samples"         , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_NUMBER_OF_SAMPLES   }, 0, 0, FLAGS, "measure" },
-      { "Peak_count"                , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_PEAK_COUNT          }, 0, 0, FLAGS, "measure" },
-      { "Peak_level"                , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_PEAK_LEVEL          }, 0, 0, FLAGS, "measure" },
-      { "RMS_difference"            , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_RMS_DIFFERENCE      }, 0, 0, FLAGS, "measure" },
-      { "RMS_level"                 , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_RMS_LEVEL           }, 0, 0, FLAGS, "measure" },
-      { "RMS_peak"                  , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_RMS_PEAK            }, 0, 0, FLAGS, "measure" },
-      { "RMS_trough"                , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_RMS_TROUGH          }, 0, 0, FLAGS, "measure" },
-      { "Zero_crossings"            , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_ZERO_CROSSINGS      }, 0, 0, FLAGS, "measure" },
-      { "Zero_crossings_rate"       , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_ZERO_CROSSINGS_RATE }, 0, 0, FLAGS, "measure" },
-      { "Abs_Peak_count"            , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_ABS_PEAK_COUNT      }, 0, 0, FLAGS, "measure" },
-    { "measure_overall", "Select the parameters which are measured overall", OFFSET(measure_overall), AV_OPT_TYPE_FLAGS, {.i64=MEASURE_ALL}, 0, UINT_MAX, FLAGS, "measure" },
+    { "measure_perchannel", "Select the parameters which are measured per channel", OFFSET(measure_perchannel), AV_OPT_TYPE_FLAGS, {.i64=MEASURE_ALL}, 0, UINT_MAX, FLAGS, .unit = "measure" },
+      { "none"                      , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_NONE                }, 0, 0, FLAGS, .unit = "measure" },
+      { "all"                       , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_ALL                 }, 0, 0, FLAGS, .unit = "measure" },
+      { "Bit_depth"                 , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_BIT_DEPTH           }, 0, 0, FLAGS, .unit = "measure" },
+      { "Crest_factor"              , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_CREST_FACTOR        }, 0, 0, FLAGS, .unit = "measure" },
+      { "DC_offset"                 , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_DC_OFFSET           }, 0, 0, FLAGS, .unit = "measure" },
+      { "Dynamic_range"             , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_DYNAMIC_RANGE       }, 0, 0, FLAGS, .unit = "measure" },
+      { "Entropy"                   , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_ENTROPY             }, 0, 0, FLAGS, .unit = "measure" },
+      { "Flat_factor"               , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_FLAT_FACTOR         }, 0, 0, FLAGS, .unit = "measure" },
+      { "Max_difference"            , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_MAX_DIFFERENCE      }, 0, 0, FLAGS, .unit = "measure" },
+      { "Max_level"                 , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_MAX_LEVEL           }, 0, 0, FLAGS, .unit = "measure" },
+      { "Mean_difference"           , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_MEAN_DIFFERENCE     }, 0, 0, FLAGS, .unit = "measure" },
+      { "Min_difference"            , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_MIN_DIFFERENCE      }, 0, 0, FLAGS, .unit = "measure" },
+      { "Min_level"                 , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_MIN_LEVEL           }, 0, 0, FLAGS, .unit = "measure" },
+      { "Noise_floor"               , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_NOISE_FLOOR         }, 0, 0, FLAGS, .unit = "measure" },
+      { "Noise_floor_count"         , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_NOISE_FLOOR_COUNT   }, 0, 0, FLAGS, .unit = "measure" },
+      { "Number_of_Infs"            , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_NUMBER_OF_INFS      }, 0, 0, FLAGS, .unit = "measure" },
+      { "Number_of_NaNs"            , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_NUMBER_OF_NANS      }, 0, 0, FLAGS, .unit = "measure" },
+      { "Number_of_denormals"       , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_NUMBER_OF_DENORMALS }, 0, 0, FLAGS, .unit = "measure" },
+      { "Number_of_samples"         , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_NUMBER_OF_SAMPLES   }, 0, 0, FLAGS, .unit = "measure" },
+      { "Peak_count"                , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_PEAK_COUNT          }, 0, 0, FLAGS, .unit = "measure" },
+      { "Peak_level"                , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_PEAK_LEVEL          }, 0, 0, FLAGS, .unit = "measure" },
+      { "RMS_difference"            , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_RMS_DIFFERENCE      }, 0, 0, FLAGS, .unit = "measure" },
+      { "RMS_level"                 , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_RMS_LEVEL           }, 0, 0, FLAGS, .unit = "measure" },
+      { "RMS_peak"                  , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_RMS_PEAK            }, 0, 0, FLAGS, .unit = "measure" },
+      { "RMS_trough"                , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_RMS_TROUGH          }, 0, 0, FLAGS, .unit = "measure" },
+      { "Zero_crossings"            , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_ZERO_CROSSINGS      }, 0, 0, FLAGS, .unit = "measure" },
+      { "Zero_crossings_rate"       , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_ZERO_CROSSINGS_RATE }, 0, 0, FLAGS, .unit = "measure" },
+      { "Abs_Peak_count"            , "", 0, AV_OPT_TYPE_CONST, {.i64=MEASURE_ABS_PEAK_COUNT      }, 0, 0, FLAGS, .unit = "measure" },
+    { "measure_overall", "Select the parameters which are measured overall", OFFSET(measure_overall), AV_OPT_TYPE_FLAGS, {.i64=MEASURE_ALL}, 0, UINT_MAX, FLAGS, .unit = "measure" },
     { NULL }
 };
 
@@ -209,7 +210,7 @@ static int config_output(AVFilterLink *outlink)
 {
     AudioStatsContext *s = outlink->src->priv;
 
-    s->chstats = av_calloc(sizeof(*s->chstats), outlink->ch_layout.nb_channels);
+    s->chstats = av_calloc(outlink->ch_layout.nb_channels, sizeof(*s->chstats));
     if (!s->chstats)
         return AVERROR(ENOMEM);
 
@@ -683,8 +684,8 @@ static int filter_channel(AVFilterContext *ctx, void *arg, int jobnr, int nb_job
     const uint8_t * const * const data = (const uint8_t * const *)buf->extended_data;
     const int channels = s->nb_channels;
     const int samples = buf->nb_samples;
-    const int start = (buf->ch_layout.nb_channels * jobnr) / nb_jobs;
-    const int end = (buf->ch_layout.nb_channels * (jobnr+1)) / nb_jobs;
+    const int start = ff_slice_pos(buf->ch_layout.nb_channels, jobnr, nb_jobs);
+    const int end = ff_slice_pos(buf->ch_layout.nb_channels, jobnr + 1, nb_jobs);
 
     switch (inlink->format) {
     case AV_SAMPLE_FMT_DBLP:
@@ -835,7 +836,7 @@ static void print_stats(AVFilterContext *ctx)
             av_log(ctx, AV_LOG_INFO, "RMS peak dB: %f\n", LINEAR_TO_DB(sqrt(p->max_sigma_x2)));
         if (s->measure_perchannel & MEASURE_RMS_TROUGH)
             if (p->min_sigma_x2 != 1)
-                av_log(ctx, AV_LOG_INFO, "RMS trough dB: %f\n",LINEAR_TO_DB(sqrt(p->min_sigma_x2)));
+                av_log(ctx, AV_LOG_INFO, "RMS through dB: %f\n",LINEAR_TO_DB(sqrt(p->min_sigma_x2)));
         if (s->measure_perchannel & MEASURE_CREST_FACTOR)
             av_log(ctx, AV_LOG_INFO, "Crest factor: %f\n", p->sigma_x2 ? FFMAX(-p->nmin, p->nmax) / sqrt(p->sigma_x2 / p->nb_samples) : 1);
         if (s->measure_perchannel & MEASURE_FLAT_FACTOR)
@@ -895,7 +896,7 @@ static void print_stats(AVFilterContext *ctx)
         av_log(ctx, AV_LOG_INFO, "RMS peak dB: %f\n", LINEAR_TO_DB(sqrt(max_sigma_x2)));
     if (s->measure_overall & MEASURE_RMS_TROUGH)
         if (min_sigma_x2 != 1)
-            av_log(ctx, AV_LOG_INFO, "RMS trough dB: %f\n", LINEAR_TO_DB(sqrt(min_sigma_x2)));
+            av_log(ctx, AV_LOG_INFO, "RMS through dB: %f\n", LINEAR_TO_DB(sqrt(min_sigma_x2)));
     if (s->measure_overall & MEASURE_FLAT_FACTOR)
         av_log(ctx, AV_LOG_INFO, "Flat factor: %f\n", LINEAR_TO_DB((min_runs + max_runs) / (min_count + max_count)));
     if (s->measure_overall & MEASURE_PEAK_COUNT)
@@ -955,11 +956,12 @@ static const AVFilterPad astats_outputs[] = {
     },
 };
 
-const AVFilter ff_af_astats = {
-    .name          = "astats",
-    .description   = NULL_IF_CONFIG_SMALL("Show time domain statistics about audio frames."),
+const FFFilter ff_af_astats = {
+    .p.name        = "astats",
+    .p.description = NULL_IF_CONFIG_SMALL("Show time domain statistics about audio frames."),
+    .p.priv_class  = &astats_class,
+    .p.flags       = AVFILTER_FLAG_SLICE_THREADS | AVFILTER_FLAG_METADATA_ONLY,
     .priv_size     = sizeof(AudioStatsContext),
-    .priv_class    = &astats_class,
     .uninit        = uninit,
     FILTER_INPUTS(astats_inputs),
     FILTER_OUTPUTS(astats_outputs),
@@ -968,5 +970,4 @@ const AVFilter ff_af_astats = {
                       AV_SAMPLE_FMT_S64, AV_SAMPLE_FMT_S64P,
                       AV_SAMPLE_FMT_FLT, AV_SAMPLE_FMT_FLTP,
                       AV_SAMPLE_FMT_DBL, AV_SAMPLE_FMT_DBLP),
-    .flags         = AVFILTER_FLAG_SLICE_THREADS | AVFILTER_FLAG_METADATA_ONLY,
 };

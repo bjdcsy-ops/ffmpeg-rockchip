@@ -32,7 +32,10 @@
 #include "libavutil/intreadwrite.h"
 #include "libavutil/intfloat.h"
 #include "libavutil/dict.h"
+#include "libavutil/mem.h"
 #include "avformat.h"
+#include "avio_internal.h"
+#include "demux.h"
 #include "internal.h"
 #include "pcm.h"
 #include "sox.h"
@@ -85,7 +88,7 @@ static int sox_read_header(AVFormatContext *s)
         return AVERROR_INVALIDDATA;
     }
 
-    if (sample_rate <= 0 || sample_rate > INT_MAX) {
+    if (sample_rate <= 0 || sample_rate > INT_MAX || isnan(sample_rate)) {
         av_log(s, AV_LOG_ERROR, "invalid sample rate (%f)\n", sample_rate);
         return AVERROR_INVALIDDATA;
     }
@@ -104,11 +107,12 @@ static int sox_read_header(AVFormatContext *s)
 
     if (comment_size && comment_size < UINT_MAX) {
         char *comment = av_malloc(comment_size+1);
+        int ret;
         if(!comment)
             return AVERROR(ENOMEM);
-        if (avio_read(pb, comment, comment_size) != comment_size) {
+        if ((ret = ffio_read_size(pb, comment, comment_size)) < 0) {
             av_freep(&comment);
-            return AVERROR(EIO);
+            return ret;
         }
         comment[comment_size] = 0;
 
@@ -131,9 +135,9 @@ static int sox_read_header(AVFormatContext *s)
     return 0;
 }
 
-const AVInputFormat ff_sox_demuxer = {
-    .name           = "sox",
-    .long_name      = NULL_IF_CONFIG_SMALL("SoX (Sound eXchange) native"),
+const FFInputFormat ff_sox_demuxer = {
+    .p.name         = "sox",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("SoX (Sound eXchange) native"),
     .read_probe     = sox_probe,
     .read_header    = sox_read_header,
     .read_packet    = ff_pcm_read_packet,

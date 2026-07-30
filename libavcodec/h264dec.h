@@ -28,7 +28,6 @@
 #ifndef AVCODEC_H264DEC_H
 #define AVCODEC_H264DEC_H
 
-#include "libavutil/buffer.h"
 #include "libavutil/mem_internal.h"
 
 #include "cabac.h"
@@ -41,7 +40,6 @@
 #include "h264dsp.h"
 #include "h264pred.h"
 #include "h264qpel.h"
-#include "h274.h"
 #include "mpegutils.h"
 #include "threadframe.h"
 #include "videodsp.h"
@@ -93,6 +91,14 @@
 
 #define IS_REF0(a)         ((a) & MB_TYPE_REF0)
 #define IS_8x8DCT(a)       ((a) & MB_TYPE_8x8DCT)
+#define IS_SUB_8X8(a)      ((a) & MB_TYPE_16x16) // note reused
+#define IS_SUB_8X4(a)      ((a) & MB_TYPE_16x8)  // note reused
+#define IS_SUB_4X8(a)      ((a) & MB_TYPE_8x16)  // note reused
+#define IS_SUB_4X4(a)      ((a) & MB_TYPE_8x8)   // note reused
+#define IS_DIR(a, part, list) ((a) & (MB_TYPE_P0L0 << ((part) + 2 * (list))))
+
+// does this mb use listX, note does not work if subMBs
+#define USES_LIST(a, list) ((a) & ((MB_TYPE_P0L0 | MB_TYPE_P1L0) << (2 * (list))))
 
 /**
  * Memory management control operation.
@@ -109,20 +115,19 @@ typedef struct H264Picture {
 
     AVFrame *f_grain;
 
-    AVBufferRef *qscale_table_buf;
+    int8_t *qscale_table_base;        ///< RefStruct reference
     int8_t *qscale_table;
 
-    AVBufferRef *motion_val_buf[2];
+    int16_t (*motion_val_base[2])[2]; ///< RefStruct reference
     int16_t (*motion_val[2])[2];
 
-    AVBufferRef *mb_type_buf;
+    uint32_t *mb_type_base;           ///< RefStruct reference
     uint32_t *mb_type;
 
     /// RefStruct reference for hardware accelerator private data
     void *hwaccel_picture_private;
 
-    AVBufferRef *ref_index_buf[2];
-    int8_t *ref_index[2];
+    int8_t *ref_index[2];   ///< RefStruct reference
 
     int field_poc[2];       ///< top/bottom POC
     int poc;                ///< frame POC
@@ -153,8 +158,10 @@ typedef struct H264Picture {
     int mb_width, mb_height;
     int mb_stride;
 
-    /* data points to an atomic_int */
-    AVBufferRef *decode_error_flags;
+    /// RefStruct reference; its pointee is shared between decoding threads.
+    atomic_int *decode_error_flags;
+
+    int gray;
 } H264Picture;
 
 typedef struct H264Ref {
@@ -296,11 +303,11 @@ typedef struct H264SliceContext {
 
     DECLARE_ALIGNED(8, uint16_t, sub_mb_type)[4];
 
-    ///< as a DCT coefficient is int32_t in high depth, we need to reserve twice the space.
+    /// as a DCT coefficient is int32_t in high depth, we need to reserve twice the space.
     DECLARE_ALIGNED(16, int16_t, mb)[16 * 48 * 2];
     DECLARE_ALIGNED(16, int16_t, mb_luma_dc)[3][16 * 2];
-    ///< as mb is addressed by scantable[i] and scantable is uint8_t we can either
-    ///< check that i is not too large or ensure that there is some unused stuff after mb
+    /// as mb is addressed by scantable[i] and scantable is uint8_t we can either
+    /// check that i is not too large or ensure that there is some unused stuff after mb
     int16_t mb_padding[256 * 2];
 
     uint8_t (*mvd_table[2])[2];
@@ -335,7 +342,6 @@ typedef struct H264Context {
     H264DSPContext h264dsp;
     H264ChromaContext h264chroma;
     H264QpelContext h264qpel;
-    H274FilmGrainDatabase h274db;
 
     H264Picture DPB[H264_MAX_PICTURE_COUNT];
     H264Picture *cur_pic_ptr;
@@ -355,7 +361,6 @@ typedef struct H264Context {
     int chroma_x_shift, chroma_y_shift;
 
     int droppable;
-    int coded_picture_number;
 
     int context_initialized;
     int flags;
@@ -520,8 +525,22 @@ typedef struct H264Context {
  * so all the following frames in presentation order are correct.
  */
 #define FRAME_RECOVERED_SEI  (1 << 1)
+/**
+ * Recovery point detected by heuristic
+ */
+#define FRAME_RECOVERED_HEURISTIC  (1 << 2)
 
-    int frame_recovered;    ///< Initial frame has been completely recovered
+    /**
+     * Initial frame has been completely recovered.
+     *
+     * Once this is set, all following decoded as well as displayed frames will be marked as recovered
+     * If a frame is marked as recovered frame_recovered will be set once this frame is output and thus
+     * all subsequently output fraames are also marked as recovered
+     *
+     * In effect, if you want all subsequent DECODED frames marked as recovered, set frame_recovered
+     * If you want all subsequent DISPLAYED frames marked as recovered, set the frame->recovered
+     */
+    int frame_recovered;
 
     int has_recovery_point;
 
@@ -548,12 +567,16 @@ typedef struct H264Context {
 
     H264SEIContext sei;
 
-    AVBufferPool *qscale_table_pool;
-    AVBufferPool *mb_type_pool;
-    AVBufferPool *motion_val_pool;
-    AVBufferPool *ref_index_pool;
-    AVBufferPool *decode_error_flags_pool;
+    struct AVRefStructPool *qscale_table_pool;
+    struct AVRefStructPool *mb_type_pool;
+    struct AVRefStructPool *motion_val_pool;
+    struct AVRefStructPool *ref_index_pool;
+    struct AVRefStructPool *decode_error_flags_pool;
     int ref2frm[MAX_SLICES][2][64];     ///< reference to frame number lists, used in the loop filter, the first 2 are for -2,-1
+
+    int non_gray;                       ///< Did we encounter a intra frame after a gray gap frame
+    int noref_gray;
+    int skip_gray;
 } H264Context;
 
 extern const uint16_t ff_h264_mb_sizes[4];

@@ -197,6 +197,9 @@ static int yuv4_write_packet(AVFormatContext *s, AVPacket *pkt)
 
     width  = st->codecpar->width;
     height = st->codecpar->height;
+    if (frame->width != width || frame->height != height)
+        return AVERROR(EINVAL);
+
     desc   = av_pix_fmt_desc_get(st->codecpar->format);
 
     /* The following code presumes all planes to be non-interleaved. */
@@ -221,9 +224,6 @@ static int yuv4_write_packet(AVFormatContext *s, AVPacket *pkt)
 
 static int yuv4_init(AVFormatContext *s)
 {
-    if (s->nb_streams != 1)
-        return AVERROR(EIO);
-
     if (s->streams[0]->codecpar->codec_id != AV_CODEC_ID_WRAPPED_AVFRAME &&
         s->streams[0]->codecpar->codec_id != AV_CODEC_ID_RAWVIDEO) {
         av_log(s, AV_LOG_ERROR, "ERROR: Codec not supported.\n");
@@ -285,7 +285,7 @@ static int yuv4_init(AVFormatContext *s)
                "gray9, gray10, gray12 "
                "and gray16 pixel formats. "
                "Use -pix_fmt to select one.\n");
-        return AVERROR(EIO);
+        return AVERROR_INVALIDDATA;
     }
 
     return 0;
@@ -297,7 +297,9 @@ const FFOutputFormat ff_yuv4mpegpipe_muxer = {
     .p.extensions      = "y4m",
     .p.audio_codec     = AV_CODEC_ID_NONE,
     .p.video_codec     = AV_CODEC_ID_WRAPPED_AVFRAME,
+    .p.subtitle_codec  = AV_CODEC_ID_NONE,
     .init              = yuv4_init,
     .write_header      = yuv4_write_header,
     .write_packet      = yuv4_write_packet,
+    .flags_internal    = FF_OFMT_FLAG_MAX_ONE_OF_EACH,
 };

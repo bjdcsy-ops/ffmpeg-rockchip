@@ -71,7 +71,9 @@
 #include "bytestream.h"
 #include "jpeg2000.h"
 #include "version.h"
+#include "libavutil/attributes.h"
 #include "libavutil/common.h"
+#include "libavutil/mem.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/opt.h"
 #include "libavutil/intreadwrite.h"
@@ -145,76 +147,6 @@ typedef struct {
     char *lr_str;
 } Jpeg2000EncoderContext;
 
-
-/* debug */
-#if 0
-#undef ifprintf
-#undef printf
-
-static void nspaces(FILE *fd, int n)
-{
-    while(n--) putc(' ', fd);
-}
-
-static void printcomp(Jpeg2000Component *comp)
-{
-    int i;
-    for (i = 0; i < comp->y1 - comp->y0; i++)
-        ff_jpeg2000_printv(comp->i_data + i * (comp->x1 - comp->x0), comp->x1 - comp->x0);
-}
-
-static void dump(Jpeg2000EncoderContext *s, FILE *fd)
-{
-    int tileno, compno, reslevelno, bandno, precno;
-    fprintf(fd, "XSiz = %d, YSiz = %d, tile_width = %d, tile_height = %d\n"
-                "numXtiles = %d, numYtiles = %d, ncomponents = %d\n"
-                "tiles:\n",
-            s->width, s->height, s->tile_width, s->tile_height,
-            s->numXtiles, s->numYtiles, s->ncomponents);
-    for (tileno = 0; tileno < s->numXtiles * s->numYtiles; tileno++){
-        Jpeg2000Tile *tile = s->tile + tileno;
-        nspaces(fd, 2);
-        fprintf(fd, "tile %d:\n", tileno);
-        for(compno = 0; compno < s->ncomponents; compno++){
-            Jpeg2000Component *comp = tile->comp + compno;
-            nspaces(fd, 4);
-            fprintf(fd, "component %d:\n", compno);
-            nspaces(fd, 4);
-            fprintf(fd, "x0 = %d, x1 = %d, y0 = %d, y1 = %d\n",
-                        comp->x0, comp->x1, comp->y0, comp->y1);
-            for(reslevelno = 0; reslevelno < s->nreslevels; reslevelno++){
-                Jpeg2000ResLevel *reslevel = comp->reslevel + reslevelno;
-                nspaces(fd, 6);
-                fprintf(fd, "reslevel %d:\n", reslevelno);
-                nspaces(fd, 6);
-                fprintf(fd, "x0 = %d, x1 = %d, y0 = %d, y1 = %d, nbands = %d\n",
-                        reslevel->x0, reslevel->x1, reslevel->y0,
-                        reslevel->y1, reslevel->nbands);
-                for(bandno = 0; bandno < reslevel->nbands; bandno++){
-                    Jpeg2000Band *band = reslevel->band + bandno;
-                    nspaces(fd, 8);
-                    fprintf(fd, "band %d:\n", bandno);
-                    nspaces(fd, 8);
-                    fprintf(fd, "x0 = %d, x1 = %d, y0 = %d, y1 = %d,"
-                                "codeblock_width = %d, codeblock_height = %d cblknx = %d cblkny = %d\n",
-                                band->x0, band->x1,
-                                band->y0, band->y1,
-                                band->codeblock_width, band->codeblock_height,
-                                band->cblknx, band->cblkny);
-                    for (precno = 0; precno < reslevel->num_precincts_x * reslevel->num_precincts_y; precno++){
-                        Jpeg2000Prec *prec = band->prec + precno;
-                        nspaces(fd, 10);
-                        fprintf(fd, "prec %d:\n", precno);
-                        nspaces(fd, 10);
-                        fprintf(fd, "xi0 = %d, xi1 = %d, yi0 = %d, yi1 = %d\n",
-                                     prec->xi0, prec->xi1, prec->yi0, prec->yi1);
-                    }
-                }
-            }
-        }
-    }
-}
-#endif
 
 /* bitstream routines */
 
@@ -579,7 +511,7 @@ static void init_quantization(Jpeg2000EncoderContext *s)
     }
 }
 
-static void init_luts(void)
+static av_cold void init_luts(void)
 {
     int i, a,
         mask = ~((1<<NMSEDEC_FRACBITS)-1);
@@ -781,7 +713,7 @@ static void putnumpasses(Jpeg2000EncoderContext *s, int n)
 
 
 static int encode_packet(Jpeg2000EncoderContext *s, Jpeg2000ResLevel *rlevel, int layno,
-                         int precno, uint8_t *expn, int numgbits, int packetno,
+                         int precno, const uint8_t *expn, int numgbits, int packetno,
                          int nlayers)
 {
     int bandno, empty = 1;
@@ -1267,7 +1199,7 @@ static void makelayer(Jpeg2000EncoderContext *s, int layno, double thresh, Jpeg2
 
 static void makelayers(Jpeg2000EncoderContext *s, Jpeg2000Tile *tile)
 {
-    int precno, compno, reslevelno, bandno, cblkno, lev, passno, layno;
+    int precno, compno, reslevelno, bandno, cblkno, passno, layno;
     int i;
     double min = DBL_MAX;
     double max = 0;
@@ -1278,7 +1210,7 @@ static void makelayers(Jpeg2000EncoderContext *s, Jpeg2000Tile *tile)
     for (compno = 0; compno < s->ncomponents; compno++){
         Jpeg2000Component *comp = tile->comp + compno;
 
-        for (reslevelno = 0, lev = codsty->nreslevels-1; reslevelno < codsty->nreslevels; reslevelno++, lev--){
+        for (reslevelno = 0; reslevelno < codsty->nreslevels; reslevelno++){
             Jpeg2000ResLevel *reslevel = comp->reslevel + reslevelno;
 
             for (precno = 0; precno < reslevel->num_precincts_x * reslevel->num_precincts_y; precno++){
@@ -1348,7 +1280,7 @@ static void makelayers(Jpeg2000EncoderContext *s, Jpeg2000Tile *tile)
     }
 }
 
-static int getcut(Jpeg2000Cblk *cblk, uint64_t lambda, int dwt_norm)
+static int getcut(Jpeg2000Cblk *cblk, uint64_t lambda)
 {
     int passno, res = 0;
     for (passno = 0; passno < cblk->npasses; passno++){
@@ -1360,7 +1292,7 @@ static int getcut(Jpeg2000Cblk *cblk, uint64_t lambda, int dwt_norm)
         dd = cblk->passes[passno].disto
            - (res ? cblk->passes[res-1].disto : 0);
 
-        if (((dd * dwt_norm) >> WMSEDEC_SHIFT) * dwt_norm >= dr * lambda)
+        if (dd  >= dr * lambda)
             res = passno+1;
     }
     return res;
@@ -1383,11 +1315,12 @@ static void truncpasses(Jpeg2000EncoderContext *s, Jpeg2000Tile *tile)
                     Jpeg2000Band *band = reslevel->band + bandno;
                     Jpeg2000Prec *prec = band->prec + precno;
 
+                    int64_t dwt_norm = dwt_norms[codsty->transform == FF_DWT53][bandpos][lev] * (int64_t)band->i_stepsize >> 15;
+                    int64_t lambda_prime = av_rescale(s->lambda, 1 << WMSEDEC_SHIFT, dwt_norm * dwt_norm);
                     for (cblkno = 0; cblkno < prec->nb_codeblocks_height * prec->nb_codeblocks_width; cblkno++){
                         Jpeg2000Cblk *cblk = prec->cblk + cblkno;
 
-                        cblk->ninclpasses = getcut(cblk, s->lambda,
-                                (int64_t)dwt_norms[codsty->transform == FF_DWT53][bandpos][lev] * (int64_t)band->i_stepsize >> 15);
+                        cblk->ninclpasses = getcut(cblk, lambda_prime);
                         cblk->layers[0].data_start = cblk->data;
                         cblk->layers[0].cum_passes = cblk->ninclpasses;
                         cblk->layers[0].npasses = cblk->ninclpasses;
@@ -1534,7 +1467,7 @@ static int encode_frame(AVCodecContext *avctx, AVPacket *pkt,
     uint8_t *chunkstart, *jp2cstart, *jp2hstart;
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(avctx->pix_fmt);
 
-    if ((ret = ff_alloc_packet(avctx, pkt, avctx->width*avctx->height*9 + AV_INPUT_BUFFER_MIN_SIZE)) < 0)
+    if ((ret = ff_alloc_packet(avctx, pkt, avctx->width*avctx->height*9 + FF_INPUT_BUFFER_MIN_SIZE)) < 0)
         return ret;
 
     // init:
@@ -1724,7 +1657,7 @@ static av_cold int j2kenc_init(AVCodecContext *avctx)
     s->avctx = avctx;
     av_log(s->avctx, AV_LOG_DEBUG, "init\n");
     if (parse_layer_rates(s)) {
-        av_log(s, AV_LOG_WARNING, "Layer rates invalid. Encoding with 1 layer based on quality metric.\n");
+        av_log(avctx, AV_LOG_WARNING, "Layer rates invalid. Encoding with 1 layer based on quality metric.\n");
         s->nlayers = 1;
         s->layer_rates[0] = 0;
         s->compression_rate_enc = 0;
@@ -1800,27 +1733,27 @@ static int j2kenc_destroy(AVCodecContext *avctx)
     return 0;
 }
 
-// taken from the libopenjpeg wraper so it matches
+// taken from the libopenjpeg wrapper so it matches
 
 #define OFFSET(x) offsetof(Jpeg2000EncoderContext, x)
 #define VE AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
 static const AVOption options[] = {
-    { "format",        "Codec Format",      OFFSET(format),        AV_OPT_TYPE_INT,   { .i64 = CODEC_JP2   }, CODEC_J2K, CODEC_JP2,   VE, "format"      },
-    { "j2k",           NULL,                0,                     AV_OPT_TYPE_CONST, { .i64 = CODEC_J2K   }, 0,         0,           VE, "format"      },
-    { "jp2",           NULL,                0,                     AV_OPT_TYPE_CONST, { .i64 = CODEC_JP2   }, 0,         0,           VE, "format"      },
+    { "format",        "Codec Format",      OFFSET(format),        AV_OPT_TYPE_INT,   { .i64 = CODEC_JP2   }, CODEC_J2K, CODEC_JP2,   VE, .unit = "format"      },
+    { "j2k",           NULL,                0,                     AV_OPT_TYPE_CONST, { .i64 = CODEC_J2K   }, 0,         0,           VE, .unit = "format"      },
+    { "jp2",           NULL,                0,                     AV_OPT_TYPE_CONST, { .i64 = CODEC_JP2   }, 0,         0,           VE, .unit = "format"      },
     { "tile_width",    "Tile Width",        OFFSET(tile_width),    AV_OPT_TYPE_INT,   { .i64 = 256         }, 1,     1<<30,           VE, },
     { "tile_height",   "Tile Height",       OFFSET(tile_height),   AV_OPT_TYPE_INT,   { .i64 = 256         }, 1,     1<<30,           VE, },
-    { "pred",          "DWT Type",          OFFSET(pred),          AV_OPT_TYPE_INT,   { .i64 = 0           }, 0,         1,           VE, "pred"        },
-    { "dwt97int",      NULL,                0,                     AV_OPT_TYPE_CONST, { .i64 = 0           }, INT_MIN, INT_MAX,       VE, "pred"        },
-    { "dwt53",         NULL,                0,                     AV_OPT_TYPE_CONST, { .i64 = 1           }, INT_MIN, INT_MAX,       VE, "pred"        },
+    { "pred",          "DWT Type",          OFFSET(pred),          AV_OPT_TYPE_INT,   { .i64 = 0           }, 0,         1,           VE, .unit = "pred"        },
+    { "dwt97int",      NULL,                0,                     AV_OPT_TYPE_CONST, { .i64 = 0           }, INT_MIN, INT_MAX,       VE, .unit = "pred"        },
+    { "dwt53",         NULL,                0,                     AV_OPT_TYPE_CONST, { .i64 = 1           }, INT_MIN, INT_MAX,       VE, .unit = "pred"        },
     { "sop",           "SOP marker",        OFFSET(sop),           AV_OPT_TYPE_INT,   { .i64 = 0           }, 0,         1,           VE, },
     { "eph",           "EPH marker",        OFFSET(eph),           AV_OPT_TYPE_INT,   { .i64 = 0           }, 0,         1,           VE, },
-    { "prog",          "Progression Order", OFFSET(prog),          AV_OPT_TYPE_INT,   { .i64 = 0           }, JPEG2000_PGOD_LRCP,         JPEG2000_PGOD_CPRL,           VE, "prog" },
-    { "lrcp",          NULL,                0,                     AV_OPT_TYPE_CONST,  { .i64 = JPEG2000_PGOD_LRCP }, 0,         0,           VE, "prog" },
-    { "rlcp",          NULL,                0,                     AV_OPT_TYPE_CONST,  { .i64 = JPEG2000_PGOD_RLCP }, 0,         0,           VE, "prog" },
-    { "rpcl",          NULL,                0,                     AV_OPT_TYPE_CONST,  { .i64 = JPEG2000_PGOD_RPCL }, 0,         0,           VE, "prog" },
-    { "pcrl",          NULL,                0,                     AV_OPT_TYPE_CONST,  { .i64 = JPEG2000_PGOD_PCRL }, 0,         0,           VE, "prog" },
-    { "cprl",          NULL,                0,                     AV_OPT_TYPE_CONST,  { .i64 = JPEG2000_PGOD_CPRL }, 0,         0,           VE, "prog" },
+    { "prog",          "Progression Order", OFFSET(prog),          AV_OPT_TYPE_INT,   { .i64 = 0           }, JPEG2000_PGOD_LRCP,         JPEG2000_PGOD_CPRL,           VE, .unit = "prog" },
+    { "lrcp",          NULL,                0,                     AV_OPT_TYPE_CONST,  { .i64 = JPEG2000_PGOD_LRCP }, 0,         0,           VE, .unit = "prog" },
+    { "rlcp",          NULL,                0,                     AV_OPT_TYPE_CONST,  { .i64 = JPEG2000_PGOD_RLCP }, 0,         0,           VE, .unit = "prog" },
+    { "rpcl",          NULL,                0,                     AV_OPT_TYPE_CONST,  { .i64 = JPEG2000_PGOD_RPCL }, 0,         0,           VE, .unit = "prog" },
+    { "pcrl",          NULL,                0,                     AV_OPT_TYPE_CONST,  { .i64 = JPEG2000_PGOD_PCRL }, 0,         0,           VE, .unit = "prog" },
+    { "cprl",          NULL,                0,                     AV_OPT_TYPE_CONST,  { .i64 = JPEG2000_PGOD_CPRL }, 0,         0,           VE, .unit = "prog" },
     { "layer_rates",   "Layer Rates",       OFFSET(lr_str),        AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, VE },
     { NULL }
 };
@@ -1843,7 +1776,7 @@ const FFCodec ff_jpeg2000_encoder = {
     .init           = j2kenc_init,
     FF_CODEC_ENCODE_CB(encode_frame),
     .close          = j2kenc_destroy,
-    .p.pix_fmts     = (const enum AVPixelFormat[]) {
+    CODEC_PIXFMTS(
         AV_PIX_FMT_RGB24, AV_PIX_FMT_RGB48,
         AV_PIX_FMT_GBR24P,AV_PIX_FMT_GBRP9, AV_PIX_FMT_GBRP10, AV_PIX_FMT_GBRP12, AV_PIX_FMT_GBRP14, AV_PIX_FMT_GBRP16,
         AV_PIX_FMT_GRAY8, AV_PIX_FMT_GRAY9, AV_PIX_FMT_GRAY10, AV_PIX_FMT_GRAY12, AV_PIX_FMT_GRAY14, AV_PIX_FMT_GRAY16,
@@ -1860,9 +1793,8 @@ const FFCodec ff_jpeg2000_encoder = {
         AV_PIX_FMT_YUVA422P, AV_PIX_FMT_YUVA422P9, AV_PIX_FMT_YUVA422P10, AV_PIX_FMT_YUVA422P16,
         AV_PIX_FMT_YUVA444P, AV_PIX_FMT_YUVA444P9, AV_PIX_FMT_YUVA444P10, AV_PIX_FMT_YUVA444P16,
 
-        AV_PIX_FMT_PAL8,
-        AV_PIX_FMT_NONE
-    },
+        AV_PIX_FMT_PAL8),
+    .color_ranges   = AVCOL_RANGE_MPEG,
     .p.priv_class   = &j2k_class,
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
 };

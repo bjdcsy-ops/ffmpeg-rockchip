@@ -674,7 +674,7 @@ static int rkmpp_prepare_udu_sei_data(AVCodecContext *avctx, MPPEncFrame *mpp_en
 
         if (sd->size < AV_UUID_LEN) {
             av_log(avctx, AV_LOG_WARNING, "Invalid UDU SEI data: "
-                   "(%"SIZE_SPECIFIER" < UUID(%d-bytes)), skipping\n",
+                   "(%zu < UUID(%d-bytes)), skipping\n",
                    sd->size, AV_UUID_LEN);
             continue;
         }
@@ -1005,9 +1005,9 @@ static int rkmpp_get_packet(AVCodecContext *avctx, AVPacket *packet, int timeout
 
     mpp_meta_get_s32(mpp_meta, KEY_ENC_AVERAGE_QP, &avg_qp);
     if (avg_qp >= 0)
-        ff_side_data_set_encoder_stats(packet, avg_qp * FF_QP2LAMBDA, NULL, 0,
-                                       (packet->flags & AV_PKT_FLAG_KEY) ?
-                                       AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_P);
+        ff_encode_add_stats_side_data(packet, avg_qp * FF_QP2LAMBDA, NULL, 0,
+                                      (packet->flags & AV_PKT_FLAG_KEY) ?
+                                      AV_PICTURE_TYPE_I : AV_PICTURE_TYPE_P);
 
     if ((ret = mpp_meta_get_frame(mpp_meta, KEY_INPUT_FRAME, &mpp_frame)) != MPP_OK) {
         av_log(avctx, AV_LOG_ERROR, "Failed to get key input frame from packet meta: %d\n", ret);

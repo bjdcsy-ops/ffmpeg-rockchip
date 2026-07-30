@@ -105,7 +105,7 @@ static int read_header(AVFormatContext *s)
     if (version <= 4) {
         // version <= 4 needs to use the file size to calculate the offsets
         if (file_size < 0) {
-            return AVERROR(EIO);
+            return AVERROR_INVALIDDATA;
         }
         if (file_size - data_size > UINT32_MAX)
             return AVERROR_INVALIDDATA;
@@ -218,13 +218,13 @@ static int read_seek(AVFormatContext *s, int stream_index,
     return 0;
 }
 
-const AVInputFormat ff_mca_demuxer = {
-    .name           = "mca",
-    .long_name      = NULL_IF_CONFIG_SMALL("MCA Audio Format"),
+const FFInputFormat ff_mca_demuxer = {
+    .p.name         = "mca",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("MCA Audio Format"),
+    .p.extensions   = "mca",
     .priv_data_size = sizeof(MCADemuxContext),
     .read_probe     = probe,
     .read_header    = read_header,
     .read_packet    = read_packet,
     .read_seek      = read_seek,
-    .extensions     = "mca",
 };

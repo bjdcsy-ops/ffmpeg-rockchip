@@ -35,8 +35,10 @@
 #include "libavutil/avassert.h"
 #include "libavutil/internal.h"
 #include "libavutil/log.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/avstring.h"
+#include "libavutil/bprint.h"
 #include "libavutil/parseutils.h"
 #include "libavutil/mathematics.h"
 #include "libavutil/time.h"
@@ -71,7 +73,7 @@ typedef struct SegmentContext {
     const AVClass *class;  /**< Class for private options. */
     int segment_idx;       ///< index of the segment file to write, starting from 0
     int segment_idx_wrap;  ///< number after which the index wraps
-    int segment_idx_wrap_nb;  ///< number of time the index has wraped
+    int segment_idx_wrap_nb;  ///< number of time the index has wrapped
     int segment_count;     ///< number of segment files already written
     const AVOutputFormat *oformat;
     AVFormatContext *avf;
@@ -99,11 +101,11 @@ typedef struct SegmentContext {
 
     char *times_str;       ///< segment times specification string
     int64_t *times;        ///< list of segment interval specification
-    int nb_times;          ///< number of elments in the times array
+    int nb_times;          ///< number of elements in the times array
 
     char *frames_str;      ///< segment frame numbers specification string
     int *frames;           ///< list of frame number specification
-    int nb_frames;         ///< number of elments in the frames array
+    int nb_frames;         ///< number of elements in the frames array
     int frame_count;       ///< total number of reference frames
     int segment_frame_count; ///< number of reference frames in the segment
 
@@ -121,7 +123,7 @@ typedef struct SegmentContext {
     int   write_empty;
 
     int use_rename;
-    char temp_list_filename[1024];
+    char *temp_list_filename;
 
     SegmentListEntry cur_entry;
     SegmentListEntry *segment_list_entries;
@@ -160,11 +162,6 @@ static int segment_mux_init(AVFormatContext *s)
     oc->max_delay          = s->max_delay;
     av_dict_copy(&oc->metadata, s->metadata, 0);
     oc->opaque             = s->opaque;
-#if FF_API_AVFORMAT_IO_CLOSE
-FF_DISABLE_DEPRECATION_WARNINGS
-    oc->io_close           = s->io_close;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
     oc->io_close2          = s->io_close2;
     oc->io_open            = s->io_open;
     oc->flags              = s->flags;
@@ -195,9 +192,10 @@ static int set_segment_filename(AVFormatContext *s)
     AVFormatContext *oc = seg->avf;
     size_t size;
     int ret;
-    char buf[1024];
+    AVBPrint filename;
     char *new_name;
 
+    av_bprint_init(&filename, 0, AV_BPRINT_SIZE_UNLIMITED);
     if (seg->segment_idx_wrap)
         seg->segment_idx %= seg->segment_idx_wrap;
     if (seg->use_strftime) {
@@ -205,18 +203,22 @@ static int set_segment_filename(AVFormatContext *s)
         struct tm *tm, tmpbuf;
         time(&now0);
         tm = localtime_r(&now0, &tmpbuf);
-        if (!strftime(buf, sizeof(buf), s->url, tm)) {
-            av_log(oc, AV_LOG_ERROR, "Could not get segment filename with strftime\n");
-            return AVERROR(EINVAL);
+        av_bprint_strftime(&filename, s->url, tm);
+        if (!av_bprint_is_complete(&filename)) {
+            av_bprint_finalize(&filename, NULL);
+            return AVERROR(ENOMEM);
         }
-    } else if (av_get_frame_filename(buf, sizeof(buf),
-                                     s->url, seg->segment_idx) < 0) {
-        av_log(oc, AV_LOG_ERROR, "Invalid segment filename template '%s'\n", s->url);
-        return AVERROR(EINVAL);
+    } else {
+        ret = ff_bprint_get_frame_filename(&filename, s->url, seg->segment_idx, 0);
+        if (ret < 0) {
+            av_bprint_finalize(&filename, NULL);
+            av_log(oc, AV_LOG_ERROR, "Invalid segment filename template '%s'\n", s->url);
+            return ret;
+        }
     }
-    new_name = av_strdup(buf);
-    if (!new_name)
-        return AVERROR(ENOMEM);
+    ret = av_bprint_finalize(&filename, &new_name);
+    if (ret < 0)
+        return ret;
     ff_format_set_url(oc, new_name);
 
     /* copy modified name in list entry */
@@ -283,7 +285,10 @@ static int segment_list_open(AVFormatContext *s)
     SegmentContext *seg = s->priv_data;
     int ret;
 
-    snprintf(seg->temp_list_filename, sizeof(seg->temp_list_filename), seg->use_rename ? "%s.tmp" : "%s", seg->list);
+    av_freep(&seg->temp_list_filename);
+    seg->temp_list_filename = av_asprintf(seg->use_rename ? "%s.tmp" : "%s", seg->list);
+    if (!seg->temp_list_filename)
+        return AVERROR(ENOMEM);
     ret = s->io_open(s, &seg->list_pb, seg->temp_list_filename, AVIO_FLAG_WRITE, NULL);
     if (ret < 0) {
         av_log(s, AV_LOG_ERROR, "Failed to open segment list '%s'\n", seg->list);
@@ -663,6 +668,7 @@ static void seg_free(AVFormatContext *s)
     av_freep(&seg->times);
     av_freep(&seg->frames);
     av_freep(&seg->cur_entry.filename);
+    av_freep(&seg->temp_list_filename);
 
     cur = seg->segment_list_entries;
     while (cur) {
@@ -1044,19 +1050,19 @@ static const AVOption options[] = {
     { "segment_list",      "set the segment list filename",              OFFSET(list),    AV_OPT_TYPE_STRING, {.str = NULL},  0, 0,       E },
     { "segment_header_filename", "write a single file containing the header", OFFSET(header_filename), AV_OPT_TYPE_STRING, {.str = NULL}, 0, 0, E },
 
-    { "segment_list_flags","set flags affecting segment list generation", OFFSET(list_flags), AV_OPT_TYPE_FLAGS, {.i64 = SEGMENT_LIST_FLAG_CACHE }, 0, UINT_MAX, E, "list_flags"},
-    { "cache",             "allow list caching",                                    0, AV_OPT_TYPE_CONST, {.i64 = SEGMENT_LIST_FLAG_CACHE }, INT_MIN, INT_MAX,   E, "list_flags"},
-    { "live",              "enable live-friendly list generation (useful for HLS)", 0, AV_OPT_TYPE_CONST, {.i64 = SEGMENT_LIST_FLAG_LIVE }, INT_MIN, INT_MAX,    E, "list_flags"},
+    { "segment_list_flags","set flags affecting segment list generation", OFFSET(list_flags), AV_OPT_TYPE_FLAGS, {.i64 = SEGMENT_LIST_FLAG_CACHE }, 0, UINT_MAX, E, .unit = "list_flags"},
+    { "cache",             "allow list caching",                                    0, AV_OPT_TYPE_CONST, {.i64 = SEGMENT_LIST_FLAG_CACHE }, INT_MIN, INT_MAX,   E, .unit = "list_flags"},
+    { "live",              "enable live-friendly list generation (useful for HLS)", 0, AV_OPT_TYPE_CONST, {.i64 = SEGMENT_LIST_FLAG_LIVE }, INT_MIN, INT_MAX,    E, .unit = "list_flags"},
 
     { "segment_list_size", "set the maximum number of playlist entries", OFFSET(list_size), AV_OPT_TYPE_INT,  {.i64 = 0},     0, INT_MAX, E },
 
-    { "segment_list_type", "set the segment list type",                  OFFSET(list_type), AV_OPT_TYPE_INT,  {.i64 = LIST_TYPE_UNDEFINED}, -1, LIST_TYPE_NB-1, E, "list_type" },
-    { "flat", "flat format",     0, AV_OPT_TYPE_CONST, {.i64=LIST_TYPE_FLAT }, INT_MIN, INT_MAX, E, "list_type" },
-    { "csv",  "csv format",      0, AV_OPT_TYPE_CONST, {.i64=LIST_TYPE_CSV  }, INT_MIN, INT_MAX, E, "list_type" },
-    { "ext",  "extended format", 0, AV_OPT_TYPE_CONST, {.i64=LIST_TYPE_EXT  }, INT_MIN, INT_MAX, E, "list_type" },
-    { "ffconcat", "ffconcat format", 0, AV_OPT_TYPE_CONST, {.i64=LIST_TYPE_FFCONCAT }, INT_MIN, INT_MAX, E, "list_type" },
-    { "m3u8", "M3U8 format",     0, AV_OPT_TYPE_CONST, {.i64=LIST_TYPE_M3U8 }, INT_MIN, INT_MAX, E, "list_type" },
-    { "hls", "Apple HTTP Live Streaming compatible", 0, AV_OPT_TYPE_CONST, {.i64=LIST_TYPE_M3U8 }, INT_MIN, INT_MAX, E, "list_type" },
+    { "segment_list_type", "set the segment list type",                  OFFSET(list_type), AV_OPT_TYPE_INT,  {.i64 = LIST_TYPE_UNDEFINED}, -1, LIST_TYPE_NB-1, E, .unit = "list_type" },
+    { "flat", "flat format",     0, AV_OPT_TYPE_CONST, {.i64=LIST_TYPE_FLAT }, INT_MIN, INT_MAX, E, .unit = "list_type" },
+    { "csv",  "csv format",      0, AV_OPT_TYPE_CONST, {.i64=LIST_TYPE_CSV  }, INT_MIN, INT_MAX, E, .unit = "list_type" },
+    { "ext",  "extended format", 0, AV_OPT_TYPE_CONST, {.i64=LIST_TYPE_EXT  }, INT_MIN, INT_MAX, E, .unit = "list_type" },
+    { "ffconcat", "ffconcat format", 0, AV_OPT_TYPE_CONST, {.i64=LIST_TYPE_FFCONCAT }, INT_MIN, INT_MAX, E, .unit = "list_type" },
+    { "m3u8", "M3U8 format",     0, AV_OPT_TYPE_CONST, {.i64=LIST_TYPE_M3U8 }, INT_MIN, INT_MAX, E, .unit = "list_type" },
+    { "hls", "Apple HTTP Live Streaming compatible", 0, AV_OPT_TYPE_CONST, {.i64=LIST_TYPE_M3U8 }, INT_MIN, INT_MAX, E, .unit = "list_type" },
 
     { "segment_atclocktime",      "set segment to be cut at clocktime",  OFFSET(use_clocktime), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, E},
     { "segment_clocktime_offset", "set segment clocktime offset",        OFFSET(clocktime_offset), AV_OPT_TYPE_DURATION, {.i64 = 0}, 0, 86400000000LL, E},

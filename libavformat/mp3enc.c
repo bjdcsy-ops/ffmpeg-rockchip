@@ -26,6 +26,7 @@
 #include "mux.h"
 #include "rawenc.h"
 #include "libavutil/avstring.h"
+#include "libavutil/mem.h"
 #include "libavcodec/mpegaudio.h"
 #include "libavcodec/mpegaudiodata.h"
 #include "libavcodec/mpegaudiodecheader.h"
@@ -321,7 +322,6 @@ static int mp3_write_audio_packet(AVFormatContext *s, AVPacket *pkt)
     if (pkt->data && pkt->size >= 4) {
         MPADecodeHeader mpah;
         int ret;
-        int av_unused base;
         uint32_t h;
 
         h = AV_RB32(pkt->data);
@@ -338,7 +338,7 @@ static int mp3_write_audio_packet(AVFormatContext *s, AVPacket *pkt)
 
 #ifdef FILTER_VBR_HEADERS
         /* filter out XING and INFO headers. */
-        base = 4 + xing_offtbl[mpah.lsf == 1][mpah.nb_channels == 1];
+        int base = 4 + xing_offtbl[mpah.lsf == 1][mpah.nb_channels == 1];
 
         if (base + 4 <= pkt->size) {
             uint32_t v = AV_RB32(pkt->data + base);
@@ -495,12 +495,16 @@ static int mp3_write_trailer(struct AVFormatContext *s)
 static int query_codec(enum AVCodecID id, int std_compliance)
 {
     const CodecMime *cm= ff_id3v2_mime_tags;
+
+    if (id == AV_CODEC_ID_MP3)
+        return 1;
+
     while(cm->id != AV_CODEC_ID_NONE) {
         if(id == cm->id)
             return MKTAG('A', 'P', 'I', 'C');
         cm++;
     }
-    return -1;
+    return 0;
 }
 
 static const AVOption options[] = {

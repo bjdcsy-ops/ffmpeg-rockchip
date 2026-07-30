@@ -24,13 +24,12 @@
  * Rich Felker.
  */
 
-#include "libavutil/emms.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/pixelutils.h"
 #include "libavutil/timestamp.h"
 #include "avfilter.h"
-#include "internal.h"
+#include "filters.h"
 #include "video.h"
 
 typedef struct DecimateContext {
@@ -142,13 +141,10 @@ static int decimate_frame(AVFilterContext *ctx,
                         cur->data[plane], cur->linesize[plane],
                         ref->data[plane], ref->linesize[plane],
                         AV_CEIL_RSHIFT(ref->width,  hsub),
-                        AV_CEIL_RSHIFT(ref->height, vsub))) {
-            emms_c();
+                        AV_CEIL_RSHIFT(ref->height, vsub)))
             return 0;
-        }
     }
 
-    emms_c();
     return 1;
 }
 
@@ -212,7 +208,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *cur)
         av_frame_free(&decimate->ref);
         decimate->ref = cur;
         decimate->drop_count = FFMIN(-1, decimate->drop_count-1);
-        if (decimate->keep_count < 0) // re-enable counting similiar frames to ignore before dropping
+        if (decimate->keep_count < 0) // re-enable counting similar frames to ignore before dropping
             decimate->keep_count = 0;
 
         if ((ret = ff_filter_frame(outlink, av_frame_clone(cur))) < 0)
@@ -241,13 +237,13 @@ static const AVFilterPad mpdecimate_inputs[] = {
     },
 };
 
-const AVFilter ff_vf_mpdecimate = {
-    .name          = "mpdecimate",
-    .description   = NULL_IF_CONFIG_SMALL("Remove near-duplicate frames."),
+const FFFilter ff_vf_mpdecimate = {
+    .p.name        = "mpdecimate",
+    .p.description = NULL_IF_CONFIG_SMALL("Remove near-duplicate frames."),
+    .p.priv_class  = &mpdecimate_class,
     .init          = init,
     .uninit        = uninit,
     .priv_size     = sizeof(DecimateContext),
-    .priv_class    = &mpdecimate_class,
     FILTER_INPUTS(mpdecimate_inputs),
     FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),

@@ -25,6 +25,7 @@
  */
 
 #include "avformat.h"
+#include "demux.h"
 #include "libavutil/bprint.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/opt.h"
@@ -84,7 +85,10 @@ static int gif_probe(const AVProbeData *p)
 
 static int resync(AVIOContext *pb)
 {
-    ffio_ensure_seekback(pb, 13);
+    int ret = ffio_ensure_seekback(pb, 13);
+    if (ret < 0)
+        return ret;
+
     for (int i = 0; i < 6; i++) {
         int b = avio_r8(pb);
         if (b != gif87a_sig[i] && b != gif89a_sig[i])
@@ -114,6 +118,7 @@ static int gif_read_header(AVFormatContext *s)
     AVStream        *st;
     int type, width, height, ret, n, flags;
     int64_t nb_frames = 0, duration = 0, pos;
+    int64_t ret64;
 
     if ((ret = resync(pb)) < 0)
         return ret;
@@ -211,8 +216,9 @@ static int gif_read_header(AVFormatContext *s)
 
 skip:
     /* jump to start because gif decoder needs header data too */
-    if (avio_seek(pb, pos - 6, SEEK_SET) != pos - 6)
-        return AVERROR(EIO);
+    ret64 = avio_seek(pb, pos - 6, SEEK_SET);
+    if (ret64 < 0)
+        return (int)ret64;
 
     /* GIF format operates with time in "hundredths of second",
      * therefore timebase is 1/100 */
@@ -278,14 +284,14 @@ static const AVClass demuxer_class = {
     .category   = AV_CLASS_CATEGORY_DEMUXER,
 };
 
-const AVInputFormat ff_gif_demuxer = {
-    .name           = "gif",
-    .long_name      = NULL_IF_CONFIG_SMALL("CompuServe Graphics Interchange Format (GIF)"),
+const FFInputFormat ff_gif_demuxer = {
+    .p.name         = "gif",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("CompuServe Graphics Interchange Format (GIF)"),
+    .p.flags        = AVFMT_GENERIC_INDEX,
+    .p.extensions   = "gif",
+    .p.priv_class   = &demuxer_class,
     .priv_data_size = sizeof(GIFDemuxContext),
     .read_probe     = gif_probe,
     .read_header    = gif_read_header,
     .read_packet    = gif_read_packet,
-    .flags          = AVFMT_GENERIC_INDEX,
-    .extensions     = "gif",
-    .priv_class     = &demuxer_class,
 };

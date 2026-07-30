@@ -73,15 +73,18 @@ static int apc_read_header(AVFormatContext *s)
 
 static int apc_read_packet(AVFormatContext *s, AVPacket *pkt)
 {
-    if (av_get_packet(s->pb, pkt, MAX_READ_SIZE) <= 0)
-        return AVERROR(EIO);
+    int ret = av_get_packet(s->pb, pkt, MAX_READ_SIZE);
+    if (ret < 0)
+        return ret;
+    else if (ret == 0)
+        return AVERROR_INVALIDDATA;
     pkt->stream_index = 0;
     return 0;
 }
 
-const AVInputFormat ff_apc_demuxer = {
-    .name           = "apc",
-    .long_name      = NULL_IF_CONFIG_SMALL("CRYO APC"),
+const FFInputFormat ff_apc_demuxer = {
+    .p.name         = "apc",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("CRYO APC"),
     .read_probe     = apc_probe,
     .read_header    = apc_read_header,
     .read_packet    = apc_read_packet,

@@ -70,8 +70,8 @@
 #include "libavutil/avstring.h"
 #include "libavutil/bprint.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
-#include "mxf.h"
 #include <inttypes.h>
 #include <libxml/parser.h>
 
@@ -139,15 +139,15 @@ static int imf_uri_is_unix_abs_path(const char *string)
 
 static int imf_uri_is_dos_abs_path(const char *string)
 {
-    /* Absolute path case: `C:\path\to\somwhere` */
+    /* Absolute path case: `C:\path\to\somewhere` */
     if (string[1] == ':' && string[2] == '\\')
         return 1;
 
-    /* Absolute path case: `C:/path/to/somwhere` */
+    /* Absolute path case: `C:/path/to/somewhere` */
     if (string[1] == ':' && string[2] == '/')
         return 1;
 
-    /* Network path case: `\\path\to\somwhere` */
+    /* Network path case: `\\path\to\somewhere` */
     if (string[0] == '\\' && string[1] == '\\')
         return 1;
 
@@ -379,12 +379,8 @@ static int open_track_resource_context(AVFormatContext *s,
         return AVERROR(ENOMEM);
 
     track_resource->ctx->io_open = s->io_open;
-#if FF_API_AVFORMAT_IO_CLOSE
-FF_DISABLE_DEPRECATION_WARNINGS
-    track_resource->ctx->io_close = s->io_close;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
     track_resource->ctx->io_close2 = s->io_close2;
+    track_resource->ctx->opaque = s->opaque;
     track_resource->ctx->flags |= s->flags & ~AVFMT_FLAG_CUSTOM_IO;
 
     if ((ret = ff_copy_whiteblacklists(track_resource->ctx, s)) < 0)
@@ -700,11 +696,8 @@ static int imf_read_header(AVFormatContext *s)
 static IMFVirtualTrackPlaybackCtx *get_next_track_with_minimum_timestamp(AVFormatContext *s)
 {
     IMFContext *c = s->priv_data;
-    IMFVirtualTrackPlaybackCtx *track;
+    IMFVirtualTrackPlaybackCtx *track = NULL;
     AVRational minimum_timestamp = av_make_q(INT32_MAX, 1);
-
-    if (!c->track_count)
-        return NULL;
 
     for (uint32_t i = c->track_count; i > 0; i--) {
         av_log(s, AV_LOG_TRACE, "Compare track %d timestamp " AVRATIONAL_FORMAT
@@ -1019,12 +1012,12 @@ static const AVClass imf_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-const AVInputFormat ff_imf_demuxer = {
-    .name           = "imf",
-    .long_name      = NULL_IF_CONFIG_SMALL("IMF (Interoperable Master Format)"),
-    .flags          = AVFMT_NO_BYTE_SEEK,
-    .flags_internal = FF_FMT_INIT_CLEANUP,
-    .priv_class     = &imf_class,
+const FFInputFormat ff_imf_demuxer = {
+    .p.name         = "imf",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("IMF (Interoperable Master Format)"),
+    .p.flags        = AVFMT_NO_BYTE_SEEK,
+    .p.priv_class   = &imf_class,
+    .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
     .priv_data_size = sizeof(IMFContext),
     .read_probe     = imf_probe,
     .read_header    = imf_read_header,

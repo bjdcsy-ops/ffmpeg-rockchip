@@ -29,7 +29,10 @@
 
 #include "libavutil/channel_layout.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "avformat.h"
+#include "avio_internal.h"
+#include "demux.h"
 #include "internal.h"
 #include "avio_internal.h"
 
@@ -100,8 +103,8 @@ static int vmd_read_header(AVFormatContext *s)
 
     /* fetch the main header, including the 2 header length bytes */
     avio_seek(pb, 0, SEEK_SET);
-    if (avio_read(pb, vmd->vmd_header, VMD_HEADER_SIZE) != VMD_HEADER_SIZE)
-        return AVERROR(EIO);
+    if ((ret = ffio_read_size(pb, vmd->vmd_header, VMD_HEADER_SIZE)) < 0)
+        return ret;
 
     width = AV_RL16(&vmd->vmd_header[12]);
     height = AV_RL16(&vmd->vmd_header[14]);
@@ -190,11 +193,8 @@ static int vmd_read_header(AVFormatContext *s)
         ret = AVERROR(ENOMEM);
         goto error;
     }
-    if (avio_read(pb, raw_frame_table, raw_frame_table_size) !=
-        raw_frame_table_size) {
-        ret = AVERROR(EIO);
+    if ((ret = ffio_read_size(pb, raw_frame_table, raw_frame_table_size)) < 0)
         goto error;
-    }
 
     total_frames = 0;
     for (i = 0; i < vmd->frame_count; i++) {
@@ -277,21 +277,18 @@ static int vmd_read_packet(AVFormatContext *s,
     avio_seek(pb, frame->frame_offset, SEEK_SET);
 
     if(ffio_limit(pb, frame->frame_size) != frame->frame_size)
-        return AVERROR(EIO);
+        return AVERROR_INVALIDDATA;
     ret = av_new_packet(pkt, frame->frame_size + BYTES_PER_FRAME_RECORD);
     if (ret < 0)
         return ret;
     pkt->pos= avio_tell(pb);
     memcpy(pkt->data, frame->frame_record, BYTES_PER_FRAME_RECORD);
     if(vmd->is_indeo3 && frame->frame_record[0] == 0x02)
-        ret = avio_read(pb, pkt->data, frame->frame_size);
+        ret = ffio_read_size(pb, pkt->data, frame->frame_size);
     else
-        ret = avio_read(pb, pkt->data + BYTES_PER_FRAME_RECORD,
+        ret = ffio_read_size(pb, pkt->data + BYTES_PER_FRAME_RECORD,
             frame->frame_size);
 
-    if (ret != frame->frame_size) {
-        ret = AVERROR(EIO);
-    }
     pkt->stream_index = frame->stream_index;
     pkt->pts = frame->pts;
     av_log(s, AV_LOG_DEBUG, " dispatching %s frame with %d bytes and pts %"PRId64"\n",
@@ -313,11 +310,11 @@ static int vmd_read_close(AVFormatContext *s)
     return 0;
 }
 
-const AVInputFormat ff_vmd_demuxer = {
-    .name           = "vmd",
-    .long_name      = NULL_IF_CONFIG_SMALL("Sierra VMD"),
+const FFInputFormat ff_vmd_demuxer = {
+    .p.name         = "vmd",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Sierra VMD"),
     .priv_data_size = sizeof(VmdDemuxContext),
-    .flags_internal = FF_FMT_INIT_CLEANUP,
+    .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
     .read_probe     = vmd_probe,
     .read_header    = vmd_read_header,
     .read_packet    = vmd_read_packet,

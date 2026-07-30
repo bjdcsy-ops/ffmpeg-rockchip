@@ -23,6 +23,8 @@
 #include "libavutil/intreadwrite.h"
 #include "libavutil/dict.h"
 #include "avformat.h"
+#include "avio_internal.h"
+#include "demux.h"
 #include "internal.h"
 #include "apetag.h"
 #include "id3v1.h"
@@ -267,7 +269,7 @@ static int wv_read_header(AVFormatContext *s)
     if (s->pb->seekable & AVIO_SEEKABLE_NORMAL) {
         int64_t cur = avio_tell(s->pb);
         wc->apetag_start = ff_ape_parse_tag(s);
-        if (!av_dict_get(s->metadata, "", NULL, AV_DICT_IGNORE_SUFFIX))
+        if (av_dict_count(s->metadata) == 0)
             ff_id3v1_read(s);
         avio_seek(s->pb, cur, SEEK_SET);
     }
@@ -294,9 +296,9 @@ static int wv_read_packet(AVFormatContext *s, AVPacket *pkt)
     if ((ret = av_new_packet(pkt, wc->header.blocksize + WV_HEADER_SIZE)) < 0)
         return ret;
     memcpy(pkt->data, wc->block_header, WV_HEADER_SIZE);
-    ret = avio_read(s->pb, pkt->data + WV_HEADER_SIZE, wc->header.blocksize);
-    if (ret != wc->header.blocksize) {
-        return AVERROR(EIO);
+    ret = ffio_read_size(s->pb, pkt->data + WV_HEADER_SIZE, wc->header.blocksize);
+    if (ret < 0) {
+        return ret;
     }
     while (!(wc->header.flags & WV_FLAG_FINAL_BLOCK)) {
         if ((ret = wv_read_block_header(s, s->pb)) < 0) {
@@ -328,12 +330,12 @@ static int wv_read_packet(AVFormatContext *s, AVPacket *pkt)
     return 0;
 }
 
-const AVInputFormat ff_wv_demuxer = {
-    .name           = "wv",
-    .long_name      = NULL_IF_CONFIG_SMALL("WavPack"),
+const FFInputFormat ff_wv_demuxer = {
+    .p.name         = "wv",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("WavPack"),
+    .p.flags        = AVFMT_GENERIC_INDEX,
     .priv_data_size = sizeof(WVContext),
     .read_probe     = wv_probe,
     .read_header    = wv_read_header,
     .read_packet    = wv_read_packet,
-    .flags          = AVFMT_GENERIC_INDEX,
 };

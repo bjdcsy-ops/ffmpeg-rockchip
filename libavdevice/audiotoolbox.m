@@ -28,6 +28,7 @@
 #import <AudioToolbox/AudioToolbox.h>
 #include <pthread.h>
 
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavformat/internal.h"
 #include "libavformat/mux.h"
@@ -85,7 +86,11 @@ static av_cold int at_write_header(AVFormatContext *avctx)
     AudioObjectPropertyAddress prop;
     prop.mSelector = kAudioHardwarePropertyDevices;
     prop.mScope    = kAudioObjectPropertyScopeGlobal;
+#if !TARGET_OS_IPHONE && __MAC_OS_X_VERSION_MIN_REQUIRED >= 120000
+    prop.mElement  = kAudioObjectPropertyElementMain;
+#else
     prop.mElement  = kAudioObjectPropertyElementMaster;
+#endif
     err = AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &prop, 0, NULL, &data_size);
     if (check_status(avctx, &err, "AudioObjectGetPropertyDataSize devices"))
         return AVERROR(EINVAL);
@@ -242,7 +247,7 @@ static int at_write_packet(AVFormatContext *avctx, AVPacket *pkt)
     // will be unlocked by queue callback
     pthread_mutex_lock(&ctx->buffer_lock[ctx->cur_buf]);
 
-    // (re-)allocate the buffer if not existant or of different size
+    // (re-)allocate the buffer if not existent or of different size
     if (!ctx->buffer[ctx->cur_buf] || ctx->buffer[ctx->cur_buf]->mAudioDataBytesCapacity != pkt->size) {
         err = AudioQueueAllocateBuffer(ctx->queue, pkt->size, &ctx->buffer[ctx->cur_buf]);
         if (check_status(avctx, &err, "AudioQueueAllocateBuffer")) {

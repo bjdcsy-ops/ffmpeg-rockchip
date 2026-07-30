@@ -26,8 +26,10 @@
 #include <libmodplug/modplug.h>
 #include "libavutil/avstring.h"
 #include "libavutil/eval.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
 
 typedef struct ModPlugContext {
@@ -346,7 +348,7 @@ static int modplug_read_packet(AVFormatContext *s, AVPacket *pkt)
 
     pkt->size = ModPlug_Read(modplug->f, pkt->data, AUDIO_PKT_SIZE);
     if (pkt->size <= 0) {
-        return pkt->size == 0 ? AVERROR_EOF : AVERROR(EIO);
+        return pkt->size == 0 ? AVERROR_EOF : AVERROR_EXTERNAL;
     }
     return 0;
 }
@@ -380,15 +382,15 @@ static const AVClass modplug_class = {
     .version    = LIBAVUTIL_VERSION_INT,
 };
 
-const AVInputFormat ff_libmodplug_demuxer = {
-    .name           = "libmodplug",
-    .long_name      = NULL_IF_CONFIG_SMALL("ModPlug demuxer"),
+const FFInputFormat ff_libmodplug_demuxer = {
+    .p.name         = "libmodplug",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("ModPlug demuxer"),
+    .p.extensions   = modplug_extensions,
+    .p.priv_class   = &modplug_class,
     .priv_data_size = sizeof(ModPlugContext),
     .read_probe     = modplug_probe,
     .read_header    = modplug_read_header,
     .read_packet    = modplug_read_packet,
     .read_close     = modplug_read_close,
     .read_seek      = modplug_read_seek,
-    .extensions     = modplug_extensions,
-    .priv_class     = &modplug_class,
 };

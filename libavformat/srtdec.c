@@ -21,6 +21,7 @@
  */
 
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
 #include "subtitles.h"
 #include "libavutil/bprint.h"
@@ -198,8 +199,8 @@ static int srt_read_header(AVFormatContext *s)
     }
 
     /* Append the last event. Here we force the cache to be flushed, because a
-     * trailing number is more likely to be geniune (for example a copyright
-     * date) and not the event index of an inexistant event */
+     * trailing number is more likely to be genuine (for example a copyright
+     * date) and not the event index of an inexistent event */
     if (has_event_info) {
         res = add_event(&srt->q, &buf, line_cache, &ei, 1);
         if (res < 0)
@@ -213,11 +214,11 @@ end:
     return res;
 }
 
-const AVInputFormat ff_srt_demuxer = {
-    .name        = "srt",
-    .long_name   = NULL_IF_CONFIG_SMALL("SubRip subtitle"),
+const FFInputFormat ff_srt_demuxer = {
+    .p.name      = "srt",
+    .p.long_name = NULL_IF_CONFIG_SMALL("SubRip subtitle"),
     .priv_data_size = sizeof(SRTContext),
-    .flags_internal = FF_FMT_INIT_CLEANUP,
+    .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
     .read_probe  = srt_probe,
     .read_header = srt_read_header,
     .read_packet = ff_subtitles_read_packet,

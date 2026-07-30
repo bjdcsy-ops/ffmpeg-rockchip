@@ -27,6 +27,7 @@
 #include "libavutil/channel_layout.h"
 #include "libavutil/intreadwrite.h"
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
 #include "avio_internal.h"
 
@@ -152,7 +153,7 @@ static int cin_read_frame_header(CinDemuxContext *cin, AVIOContext *pb) {
     hdr->audio_frame_size = avio_rl32(pb);
 
     if (avio_feof(pb) || pb->error)
-        return AVERROR(EIO);
+        return pb->error ? pb->error : AVERROR_INVALIDDATA;
 
     if (avio_rl32(pb) != 0xAA55AA55)
         return AVERROR_INVALIDDATA;
@@ -227,9 +228,9 @@ static int cin_read_packet(AVFormatContext *s, AVPacket *pkt)
     return 0;
 }
 
-const AVInputFormat ff_dsicin_demuxer = {
-    .name           = "dsicin",
-    .long_name      = NULL_IF_CONFIG_SMALL("Delphine Software International CIN"),
+const FFInputFormat ff_dsicin_demuxer = {
+    .p.name         = "dsicin",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Delphine Software International CIN"),
     .priv_data_size = sizeof(CinDemuxContext),
     .read_probe     = cin_probe,
     .read_header    = cin_read_header,

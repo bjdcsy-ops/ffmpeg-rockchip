@@ -28,6 +28,7 @@
 
 #include "libavutil/channel_layout.h"
 #include "avformat.h"
+#include "demux.h"
 #include "internal.h"
 #include "libavutil/avstring.h"
 
@@ -135,7 +136,7 @@ static int iss_read_packet(AVFormatContext *s, AVPacket *pkt)
     int ret = av_get_packet(s->pb, pkt, iss->packet_size);
 
     if(ret != iss->packet_size)
-        return AVERROR(EIO);
+        return AVERROR_INVALIDDATA;
 
     pkt->stream_index = 0;
     pkt->pts = avio_tell(s->pb) - iss->sample_start_pos;
@@ -144,9 +145,9 @@ static int iss_read_packet(AVFormatContext *s, AVPacket *pkt)
     return 0;
 }
 
-const AVInputFormat ff_iss_demuxer = {
-    .name           = "iss",
-    .long_name      = NULL_IF_CONFIG_SMALL("Funcom ISS"),
+const FFInputFormat ff_iss_demuxer = {
+    .p.name         = "iss",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Funcom ISS"),
     .priv_data_size = sizeof(IssDemuxContext),
     .read_probe     = iss_probe,
     .read_header    = iss_read_header,

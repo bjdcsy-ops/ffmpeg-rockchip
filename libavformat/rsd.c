@@ -22,6 +22,7 @@
 #include "libavutil/intreadwrite.h"
 #include "avformat.h"
 #include "avio.h"
+#include "avio_internal.h"
 #include "demux.h"
 #include "internal.h"
 
@@ -131,9 +132,9 @@ static int rsd_read_header(AVFormatContext *s)
             return ret;
 
         for (i = 0; i < par->ch_layout.nb_channels; i++) {
-            if (avio_feof(pb))
-                return AVERROR_EOF;
-            avio_read(s->pb, st->codecpar->extradata + 32 * i, 32);
+            ret = ffio_read_size(s->pb, st->codecpar->extradata + 32 * i, 32);
+            if (ret < 0)
+                return ret;
             avio_skip(s->pb, 8);
         }
         break;
@@ -220,13 +221,13 @@ static int rsd_read_packet(AVFormatContext *s, AVPacket *pkt)
     return ret;
 }
 
-const AVInputFormat ff_rsd_demuxer = {
-    .name           =   "rsd",
-    .long_name      =   NULL_IF_CONFIG_SMALL("GameCube RSD"),
+const FFInputFormat ff_rsd_demuxer = {
+    .p.name         =   "rsd",
+    .p.long_name    =   NULL_IF_CONFIG_SMALL("GameCube RSD"),
+    .p.extensions   =   "rsd",
+    .p.codec_tag    =   (const AVCodecTag* const []){rsd_tags, 0},
+    .p.flags        =   AVFMT_GENERIC_INDEX,
     .read_probe     =   rsd_probe,
     .read_header    =   rsd_read_header,
     .read_packet    =   rsd_read_packet,
-    .extensions     =   "rsd",
-    .codec_tag      =   (const AVCodecTag* const []){rsd_tags, 0},
-    .flags          =   AVFMT_GENERIC_INDEX,
 };

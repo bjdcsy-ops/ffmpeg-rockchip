@@ -20,40 +20,64 @@
 
 #include "libavutil/riscv/asm.S"
 
-func ff_get_pixels_8_rvv, zve32x
+func ff_get_pixels_8_rvv, zve64x
+        lpad    0
+        vsetivli zero, 8, e8, mf2, ta, ma
+        li      t0, 8 * 8
+        vlse64.v v16, (a1), a2
+        vsetvli zero, t0, e8, m4, ta, ma
+        vwcvtu.x.x.v v8, v16
+        vse16.v v8, (a0)
+        ret
+endfunc
+
+func ff_get_pixels_unaligned_8_rvv, zve32x
+        lpad    0
+        li      t2, 8
         vsetivli     zero, 8, e8, mf2, ta, ma
-        vlsseg8e8.v  v16, (a1), a2
+1:
+        add     t1, a1, a2
+        vle8.v  v16, (a1)
+        addi    t0, a0, 2 * 8
+        vle8.v  v17, (t1)
+        addi    t2, t2, -2
         vwcvtu.x.x.v v8, v16
         vwcvtu.x.x.v v9, v17
-        vwcvtu.x.x.v v10, v18
-        vwcvtu.x.x.v v11, v19
-        vwcvtu.x.x.v v12, v20
-        vwcvtu.x.x.v v13, v21
-        vwcvtu.x.x.v v14, v22
-        vwcvtu.x.x.v v15, v23
-        vsseg8e16.v  v8, (a0)
+        vse16.v v8, (a0)
+        add     a1, t1, a2
+        vse16.v v9, (t0)
+        addi    a0, t0, 2 * 8
+        bnez    t2, 1b
+
         ret
 endfunc
 
-func ff_get_pixels_16_rvv, zve32x
-        vsetivli     zero, 8, e16, m1, ta, ma
-        vlsseg8e16.v v0, (a1), a2
-        vsseg8e16.v  v0, (a0)
+func ff_diff_pixels_rvv, zve64x
+        lpad    0
+        vsetivli zero, 8, e8, mf2, ta, ma
+        li      t0, 8 * 8
+        vlse64.v v16, (a1), a3
+        vlse64.v v24, (a2), a3
+        vsetvli zero, t0, e8, m4, ta, ma
+        vwsubu.vv v8, v16, v24
+        vse16.v v8, (a0)
         ret
 endfunc
 
-func ff_diff_pixels_rvv, zve32x
+func ff_diff_pixels_unaligned_rvv, zve32x
+        lpad    0
+        li      t3, 8
         vsetivli    zero, 8, e8, mf2, ta, ma
-        vlsseg8e8.v v16, (a1), a3
-        vlsseg8e8.v v24, (a2), a3
+1:
+        vle8.v v16, (a1)
+        add     a1, a1, a3
+        vle8.v v24, (a2)
+        add     a2, a2, a3
         vwsubu.vv   v8, v16, v24
-        vwsubu.vv   v9, v17, v25
-        vwsubu.vv   v10, v18, v26
-        vwsubu.vv   v11, v19, v27
-        vwsubu.vv   v12, v20, v28
-        vwsubu.vv   v13, v21, v29
-        vwsubu.vv   v14, v22, v30
-        vwsubu.vv   v15, v23, v31
-        vsseg8e16.v v8, (a0)
+        addi    t3, t3, -1
+        vse16.v v8, (a0)
+        addi    a0, a0, 2 * 8
+        bnez    t3, 1b
+
         ret
 endfunc

@@ -20,9 +20,11 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/mem.h"
 #include "cbs.h"
 #include "cbs_h266.h"
 #include "parser.h"
+#include "parser_internal.h"
 
 #define START_CODE 0x000001 ///< start_code_prefix_one_3bytes
 #define IS_IDR(nut)   (nut == VVC_IDR_W_RADL || nut == VVC_IDR_N_LP)
@@ -173,7 +175,7 @@ static void set_parser_ctx(AVCodecParserContext *s, AVCodecContext *avctx,
         h266_sub_width_c[sps->sps_chroma_format_idc];
     s->height = pps->pps_pic_height_in_luma_samples -
         (pps->pps_conf_win_top_offset + pps->pps_conf_win_bottom_offset) *
-        h266_sub_height_c[sps->sps_chroma_format_idc];;
+        h266_sub_height_c[sps->sps_chroma_format_idc];
 
     avctx->profile = sps->profile_tier_level.general_profile_idc;
     avctx->level = sps->profile_tier_level.general_level_idc;
@@ -184,14 +186,10 @@ static void set_parser_ctx(AVCodecParserContext *s, AVCodecContext *avctx,
     avctx->color_range =
         sps->vui.vui_full_range_flag ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
 
-    avctx->has_b_frames = (sps->sps_max_sublayers_minus1 + 1) > 2 ? 2 :
-                           sps->sps_max_sublayers_minus1;
-    avctx->max_b_frames = sps->sps_max_sublayers_minus1;
-
     if (sps->sps_ptl_dpb_hrd_params_present_flag &&
         sps->sps_timing_hrd_params_present_flag) {
-        int num = sps->sps_general_timing_hrd_parameters.num_units_in_tick;
-        int den = sps->sps_general_timing_hrd_parameters.time_scale;
+        uint32_t num = sps->sps_general_timing_hrd_parameters.num_units_in_tick;
+        uint32_t den = sps->sps_general_timing_hrd_parameters.time_scale;
 
         if (num != 0 && den != 0)
             av_reduce(&avctx->framerate.den, &avctx->framerate.num,
@@ -303,21 +301,21 @@ static int get_pu_info(PuInfo *info, const CodedBitstreamH266Context *h266,
     }
     info->pps = h266->pps[info->ph->ph_pic_parameter_set_id];
     if (!info->pps) {
-        av_log(logctx, AV_LOG_ERROR, "PPS id %d is not avaliable.\n",
+        av_log(logctx, AV_LOG_ERROR, "PPS id %d is not available.\n",
                info->ph->ph_pic_parameter_set_id);
         ret = AVERROR_INVALIDDATA;
         goto error;
     }
     info->sps = h266->sps[info->pps->pps_seq_parameter_set_id];
     if (!info->sps) {
-        av_log(logctx, AV_LOG_ERROR, "SPS id %d is not avaliable.\n",
+        av_log(logctx, AV_LOG_ERROR, "SPS id %d is not available.\n",
                info->pps->pps_seq_parameter_set_id);
         ret = AVERROR_INVALIDDATA;
         goto error;
     }
     info->pic_type = get_pict_type(pu);
     return 0;
-  error:
+error:
     memset(info, 0, sizeof(*info));
     return ret;
 }
@@ -329,7 +327,7 @@ static int append_au(AVPacket *pkt, const uint8_t *buf, int buf_size)
     if ((ret = av_grow_packet(pkt, buf_size)) < 0)
         goto end;
     memcpy(pkt->data + offset, buf, buf_size);
-  end:
+end:
     return ret;
 }
 
@@ -360,7 +358,7 @@ static int parse_nal_units(AVCodecParserContext *s, const uint8_t *buf,
         return 1;
     }
 
-    if ((ret = ff_cbs_read(ctx->cbc, pu, buf, buf_size)) < 0) {
+    if ((ret = ff_cbs_read(ctx->cbc, pu, NULL, buf, buf_size)) < 0) {
         av_log(avctx, AV_LOG_ERROR, "Failed to parse picture unit.\n");
         goto end;
     }
@@ -376,7 +374,7 @@ static int parse_nal_units(AVCodecParserContext *s, const uint8_t *buf,
     } else {
         ret = 1; //not a completed au
     }
-  end:
+end:
     ff_cbs_fragment_reset(pu);
     return ret;
 }
@@ -508,10 +506,10 @@ static av_cold void vvc_parser_close(AVCodecParserContext *s)
     av_freep(&ctx->pc.buffer);
 }
 
-const AVCodecParser ff_vvc_parser = {
-    .codec_ids      = { AV_CODEC_ID_VVC },
+const FFCodecParser ff_vvc_parser = {
+    PARSER_CODEC_LIST(AV_CODEC_ID_VVC),
     .priv_data_size = sizeof(VVCParserContext),
-    .parser_init    = vvc_parser_init,
-    .parser_close   = vvc_parser_close,
-    .parser_parse   = vvc_parser_parse,
+    .init           = vvc_parser_init,
+    .close          = vvc_parser_close,
+    .parse          = vvc_parser_parse,
 };

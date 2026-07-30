@@ -24,8 +24,8 @@
 #include "libavutil/opt.h"
 
 #include "avfilter.h"
+#include "filters.h"
 #include "formats.h"
-#include "internal.h"
 #include "video.h"
 
 typedef struct HWUploadContext {
@@ -77,7 +77,7 @@ static int hwupload_query_formats(AVFilterContext *avctx)
     input_pix_fmts  = constraints->valid_sw_formats;
     output_pix_fmts = constraints->valid_hw_formats;
 
-    input_formats = ff_make_format_list(output_pix_fmts);
+    input_formats = ff_make_pixel_format_list(output_pix_fmts);
     if (!input_formats) {
         err = AVERROR(ENOMEM);
         goto fail;
@@ -91,7 +91,7 @@ static int hwupload_query_formats(AVFilterContext *avctx)
     }
 
     if ((err = ff_formats_ref(input_formats, &avctx->inputs[0]->outcfg.formats)) < 0 ||
-        (err = ff_formats_ref(ff_make_format_list(output_pix_fmts),
+        (err = ff_formats_ref(ff_make_pixel_format_list(output_pix_fmts),
                               &avctx->outputs[0]->incfg.formats)) < 0)
         goto fail;
 
@@ -106,8 +106,10 @@ fail:
 
 static int hwupload_config_output(AVFilterLink *outlink)
 {
+    FilterLink       *outl = ff_filter_link(outlink);
     AVFilterContext *avctx = outlink->src;
     AVFilterLink   *inlink = avctx->inputs[0];
+    FilterLink        *inl = ff_filter_link(inlink);
     HWUploadContext   *ctx = avctx->priv;
     int err;
 
@@ -116,13 +118,13 @@ static int hwupload_config_output(AVFilterLink *outlink)
     if (inlink->format == outlink->format) {
         // The input is already a hardware format, so we just want to
         // pass through the input frames in their own hardware context.
-        if (!inlink->hw_frames_ctx) {
+        if (!inl->hw_frames_ctx) {
             av_log(ctx, AV_LOG_ERROR, "No input hwframe context.\n");
             return AVERROR(EINVAL);
         }
 
-        outlink->hw_frames_ctx = av_buffer_ref(inlink->hw_frames_ctx);
-        if (!outlink->hw_frames_ctx)
+        outl->hw_frames_ctx = av_buffer_ref(inl->hw_frames_ctx);
+        if (!outl->hw_frames_ctx)
             return AVERROR(ENOMEM);
 
         return 0;
@@ -138,9 +140,9 @@ static int hwupload_config_output(AVFilterLink *outlink)
            av_get_pix_fmt_name(inlink->format));
 
     ctx->hwframes->format    = outlink->format;
-    if (inlink->hw_frames_ctx) {
+    if (inl->hw_frames_ctx) {
         AVHWFramesContext *in_hwframe_ctx =
-            (AVHWFramesContext*)inlink->hw_frames_ctx->data;
+            (AVHWFramesContext*)inl->hw_frames_ctx->data;
         ctx->hwframes->sw_format = in_hwframe_ctx->sw_format;
     } else {
         ctx->hwframes->sw_format = inlink->format;
@@ -155,8 +157,8 @@ static int hwupload_config_output(AVFilterLink *outlink)
     if (err < 0)
         goto fail;
 
-    outlink->hw_frames_ctx = av_buffer_ref(ctx->hwframes_ref);
-    if (!outlink->hw_frames_ctx) {
+    outl->hw_frames_ctx = av_buffer_ref(ctx->hwframes_ref);
+    if (!outl->hw_frames_ctx) {
         err = AVERROR(ENOMEM);
         goto fail;
     }
@@ -248,15 +250,15 @@ static const AVFilterPad hwupload_outputs[] = {
     },
 };
 
-const AVFilter ff_vf_hwupload = {
-    .name          = "hwupload",
-    .description   = NULL_IF_CONFIG_SMALL("Upload a normal frame to a hardware frame"),
+const FFFilter ff_vf_hwupload = {
+    .p.name        = "hwupload",
+    .p.description = NULL_IF_CONFIG_SMALL("Upload a normal frame to a hardware frame"),
+    .p.priv_class  = &hwupload_class,
+    .p.flags       = AVFILTER_FLAG_HWDEVICE,
     .uninit        = hwupload_uninit,
     .priv_size     = sizeof(HWUploadContext),
-    .priv_class    = &hwupload_class,
     FILTER_INPUTS(hwupload_inputs),
     FILTER_OUTPUTS(hwupload_outputs),
     FILTER_QUERY_FUNC(hwupload_query_formats),
     .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
-    .flags          = AVFILTER_FLAG_HWDEVICE,
 };

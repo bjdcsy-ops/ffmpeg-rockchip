@@ -20,7 +20,10 @@
  */
 
 #include "libavutil/channel_layout.h"
+#include "libavutil/mem.h"
 #include "avformat.h"
+#include "avio_internal.h"
+#include "demux.h"
 #include "internal.h"
 
 enum BMVFlags {
@@ -86,8 +89,8 @@ static int bmv_read_packet(AVFormatContext *s, AVPacket *pkt)
         if ((err = av_reallocp(&c->packet, c->size + 1)) < 0)
             return err;
         c->packet[0] = type;
-        if (avio_read(s->pb, c->packet + 1, c->size) != c->size)
-            return AVERROR(EIO);
+        if ((err = ffio_read_size(s->pb, c->packet + 1, c->size)) < 0)
+            return err;
         if (type & BMV_AUDIO) {
             int audio_size = c->packet[1] * 65 + 1;
             if (audio_size >= c->size) {
@@ -124,12 +127,12 @@ static int bmv_read_close(AVFormatContext *s)
     return 0;
 }
 
-const AVInputFormat ff_bmv_demuxer = {
-    .name           = "bmv",
-    .long_name      = NULL_IF_CONFIG_SMALL("Discworld II BMV"),
+const FFInputFormat ff_bmv_demuxer = {
+    .p.name         = "bmv",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Discworld II BMV"),
+    .p.extensions   = "bmv",
     .priv_data_size = sizeof(BMVContext),
     .read_header    = bmv_read_header,
     .read_packet    = bmv_read_packet,
     .read_close     = bmv_read_close,
-    .extensions     = "bmv",
 };

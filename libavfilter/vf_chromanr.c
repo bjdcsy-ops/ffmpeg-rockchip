@@ -23,7 +23,7 @@
 #include "libavutil/pixdesc.h"
 
 #include "avfilter.h"
-#include "internal.h"
+#include "filters.h"
 #include "video.h"
 
 typedef struct ChromaNRContext {
@@ -97,8 +97,8 @@ static int distance ## _slice##name(AVFilterContext *ctx, void *arg,            
     const int thres_v = s->thres_v;                                                      \
     const int h = s->planeheight[1];                                                     \
     const int w = s->planewidth[1];                                                      \
-    const int slice_start = (h * jobnr) / nb_jobs;                                       \
-    const int slice_end = (h * (jobnr+1)) / nb_jobs;                                     \
+    const int slice_start = ff_slice_pos(h, jobnr, nb_jobs);                             \
+    const int slice_end = ff_slice_pos(h, jobnr + 1, nb_jobs);                           \
     type *out_uptr = (type *)(out->data[1] + slice_start * out_ulinesize);               \
     type *out_vptr = (type *)(out->data[2] + slice_start * out_vlinesize);               \
                                                                                          \
@@ -158,7 +158,7 @@ static int distance ## _slice##name(AVFilterContext *ctx, void *arg,            
                         su += U;                                                       \
                         sv += V;                                                       \
                         cn++;                                                          \
-                    } else if (fun(cyY, cuU, cvV) < thres) {                           \
+                    } else if (!extra && fun(cyY, cuU, cvV) < thres) {                 \
                         su += U;                                                       \
                         sv += V;                                                       \
                         cn++;                                                          \
@@ -210,7 +210,7 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *in)
     s->thres_u = s->threshold_u * (1 << (s->depth - 8));
     s->thres_v = s->threshold_v * (1 << (s->depth - 8));
 
-    if (s->thres_y < 200.f || s->thres_u < 200.f || s->thres_v < 200.f) {
+    if (s->threshold_y < 200.f || s->threshold_u < 200.f || s->threshold_v < 200.f) {
         switch (s->distance) {
         case 0:
             s->filter_slice = s->depth <= 8 ? manhattan_e_slice8 : manhattan_e_slice16;
@@ -272,9 +272,9 @@ static const AVOption chromanr_options[] = {
     { "threy", "set y threshold",   OFFSET(threshold_y), AV_OPT_TYPE_FLOAT, {.dbl=200},1,   200, VF },
     { "threu", "set u threshold",   OFFSET(threshold_u), AV_OPT_TYPE_FLOAT, {.dbl=200},1,   200, VF },
     { "threv", "set v threshold",   OFFSET(threshold_v), AV_OPT_TYPE_FLOAT, {.dbl=200},1,   200, VF },
-    { "distance", "set distance type", OFFSET(distance), AV_OPT_TYPE_INT, {.i64=0}, 0, 1, VF, "distance" },
-    {   "manhattan", "", 0, AV_OPT_TYPE_CONST, {.i64=0}, 0, 0, VF, "distance" },
-    {   "euclidean", "", 0, AV_OPT_TYPE_CONST, {.i64=1}, 0, 0, VF, "distance" },
+    { "distance", "set distance type", OFFSET(distance), AV_OPT_TYPE_INT, {.i64=0}, 0, 1, VF, .unit = "distance" },
+    {   "manhattan", "", 0, AV_OPT_TYPE_CONST, {.i64=0}, 0, 0, VF, .unit = "distance" },
+    {   "euclidean", "", 0, AV_OPT_TYPE_CONST, {.i64=1}, 0, 0, VF, .unit = "distance" },
     { NULL }
 };
 
@@ -289,14 +289,14 @@ static const AVFilterPad inputs[] = {
 
 AVFILTER_DEFINE_CLASS(chromanr);
 
-const AVFilter ff_vf_chromanr = {
-    .name          = "chromanr",
-    .description   = NULL_IF_CONFIG_SMALL("Reduce chrominance noise."),
+const FFFilter ff_vf_chromanr = {
+    .p.name        = "chromanr",
+    .p.description = NULL_IF_CONFIG_SMALL("Reduce chrominance noise."),
+    .p.priv_class  = &chromanr_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(ChromaNRContext),
-    .priv_class    = &chromanr_class,
     FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_INPUTS(inputs),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .process_command = ff_filter_process_command,
 };

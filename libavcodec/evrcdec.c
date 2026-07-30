@@ -182,7 +182,7 @@ static evrc_packet_rate buf_size2bitrate(const int buf_size)
  *
  * @param avctx the AV codec context
  * @param buf_size length of the buffer
- * @param buf the bufffer
+ * @param buf the buffer
  *
  * @return the bitrate on success,
  *         RATE_ERRS  if the bitrate cannot be satisfactorily determined
@@ -239,6 +239,8 @@ static av_cold int evrc_decode_init(AVCodecContext *avctx)
     av_channel_layout_uninit(&avctx->ch_layout);
     avctx->ch_layout = (AVChannelLayout)AV_CHANNEL_LAYOUT_MONO;
     avctx->sample_fmt     = AV_SAMPLE_FMT_FLT;
+    if (!avctx->sample_rate)
+        avctx->sample_rate = 8000;
 
     for (i = 0; i < FILTER_ORDER; i++) {
         e->prev_lspf[i] = (i + 1) * 0.048;
@@ -495,11 +497,11 @@ static void fcb_excitation(EVRCContext *e, const uint16_t *codebook,
 /**
  * Synthesis of the decoder output signal.
  *
- * param[in]     in              input signal
- * param[in]     filter_coeffs   LPC coefficients
- * param[in/out] memory          synthesis filter memory
- * param         buffer_length   amount of data to process
- * param[out]    samples         output samples
+ * @param[in]     in              input signal
+ * @param[in]     filter_coeffs   LPC coefficients
+ * @param[in/out] memory          synthesis filter memory
+ * @param         buffer_length   amount of data to process
+ * @param[out]    samples         output samples
  *
  * TIA/IS-127 5.2.3.15, 5.7.3.4
  */

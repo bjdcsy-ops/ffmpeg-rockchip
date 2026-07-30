@@ -22,13 +22,14 @@
 
 #include <float.h>
 
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "libavutil/tx.h"
 
 #include "avfilter.h"
+#include "filters.h"
 #include "framesync.h"
-#include "internal.h"
 
 #define MAX_THREADS 16
 
@@ -83,9 +84,9 @@ typedef struct ConvolveContext {
 
 static const AVOption convolve_options[] = {
     { "planes",  "set planes to convolve",                  OFFSET(planes),   AV_OPT_TYPE_INT,   {.i64=7}, 0, 15, FLAGS },
-    { "impulse", "when to process impulses",                OFFSET(impulse),  AV_OPT_TYPE_INT,   {.i64=1}, 0,  1, FLAGS, "impulse" },
-    {   "first", "process only first impulse, ignore rest", 0,                AV_OPT_TYPE_CONST, {.i64=0}, 0,  0, FLAGS, "impulse" },
-    {   "all",   "process all impulses",                    0,                AV_OPT_TYPE_CONST, {.i64=1}, 0,  0, FLAGS, "impulse" },
+    { "impulse", "when to process impulses",                OFFSET(impulse),  AV_OPT_TYPE_INT,   {.i64=1}, 0,  1, FLAGS, .unit = "impulse" },
+    {   "first", "process only first impulse, ignore rest", 0,                AV_OPT_TYPE_CONST, {.i64=0}, 0,  0, FLAGS, .unit = "impulse" },
+    {   "all",   "process all impulses",                    0,                AV_OPT_TYPE_CONST, {.i64=1}, 0,  0, FLAGS, .unit = "impulse" },
     { "noise",   "set noise",                               OFFSET(noise),    AV_OPT_TYPE_FLOAT, {.dbl=0.0000001}, 0,  1, FLAGS },
     { NULL },
 };
@@ -188,8 +189,8 @@ static int fft_horizontal(AVFilterContext *ctx, void *arg, int jobnr, int nb_job
     AVComplexFloat *hdata_out = td->hdata_out;
     const int plane = td->plane;
     const int n = td->n;
-    int start = (n * jobnr) / nb_jobs;
-    int end = (n * (jobnr+1)) / nb_jobs;
+    int start = ff_slice_pos(n, jobnr, nb_jobs);
+    int end = ff_slice_pos(n, jobnr + 1, nb_jobs);
     int y;
 
     for (y = start; y < end; y++) {
@@ -375,8 +376,8 @@ static int fft_vertical(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs)
     AVComplexFloat *vdata_out = td->vdata_out;
     const int plane = td->plane;
     const int n = td->n;
-    int start = (n * jobnr) / nb_jobs;
-    int end = (n * (jobnr+1)) / nb_jobs;
+    int start = ff_slice_pos(n, jobnr, nb_jobs);
+    int end = ff_slice_pos(n, jobnr + 1, nb_jobs);
     int y, x;
 
     for (y = start; y < end; y++) {
@@ -400,8 +401,8 @@ static int ifft_vertical(AVFilterContext *ctx, void *arg, int jobnr, int nb_jobs
     AVComplexFloat *vdata_in = td->vdata_in;
     const int plane = td->plane;
     const int n = td->n;
-    int start = (n * jobnr) / nb_jobs;
-    int end = (n * (jobnr+1)) / nb_jobs;
+    int start = ff_slice_pos(n, jobnr, nb_jobs);
+    int end = ff_slice_pos(n, jobnr + 1, nb_jobs);
     int y, x;
 
     for (y = start; y < end; y++) {
@@ -424,8 +425,8 @@ static int ifft_horizontal(AVFilterContext *ctx, void *arg, int jobnr, int nb_jo
     AVComplexFloat *hdata_in = td->hdata_in;
     const int plane = td->plane;
     const int n = td->n;
-    int start = (n * jobnr) / nb_jobs;
-    int end = (n * (jobnr+1)) / nb_jobs;
+    int start = ff_slice_pos(n, jobnr, nb_jobs);
+    int end = ff_slice_pos(n, jobnr + 1, nb_jobs);
     int y;
 
     for (y = start; y < end; y++) {
@@ -517,8 +518,8 @@ static int complex_multiply(AVFilterContext *ctx, void *arg, int jobnr, int nb_j
     AVComplexFloat *filter = td->vdata_in;
     const float noise = s->noise;
     const int n = td->n;
-    int start = (n * jobnr) / nb_jobs;
-    int end = (n * (jobnr+1)) / nb_jobs;
+    int start = ff_slice_pos(n, jobnr, nb_jobs);
+    int end = ff_slice_pos(n, jobnr + 1, nb_jobs);
     int y, x;
 
     for (y = start; y < end; y++) {
@@ -547,8 +548,8 @@ static int complex_xcorrelate(AVFilterContext *ctx, void *arg, int jobnr, int nb
     AVComplexFloat *filter = td->vdata_in;
     const int n = td->n;
     const float scale = 1.f / (n * n);
-    int start = (n * jobnr) / nb_jobs;
-    int end = (n * (jobnr+1)) / nb_jobs;
+    int start = ff_slice_pos(n, jobnr, nb_jobs);
+    int end = ff_slice_pos(n, jobnr + 1, nb_jobs);
 
     for (int y = start; y < end; y++) {
         int yn = y * n;
@@ -577,8 +578,8 @@ static int complex_divide(AVFilterContext *ctx, void *arg, int jobnr, int nb_job
     AVComplexFloat *filter = td->vdata_in;
     const float noise = s->noise;
     const int n = td->n;
-    int start = (n * jobnr) / nb_jobs;
-    int end = (n * (jobnr+1)) / nb_jobs;
+    int start = ff_slice_pos(n, jobnr, nb_jobs);
+    int end = ff_slice_pos(n, jobnr + 1, nb_jobs);
     int y, x;
 
     for (y = start; y < end; y++) {
@@ -743,10 +744,12 @@ static int do_convolve(FFFrameSync *fs)
 
 static int config_output(AVFilterLink *outlink)
 {
+    FilterLink *outl = ff_filter_link(outlink);
     const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(outlink->format);
     AVFilterContext *ctx = outlink->src;
     ConvolveContext *s = ctx->priv;
     AVFilterLink *mainlink = ctx->inputs[0];
+    FilterLink         *ml = ff_filter_link(mainlink);
     AVFilterLink *secondlink = ctx->inputs[1];
     int ret, i, j;
 
@@ -768,7 +771,7 @@ static int config_output(AVFilterLink *outlink)
     outlink->h = mainlink->h;
     outlink->time_base = mainlink->time_base;
     outlink->sample_aspect_ratio = mainlink->sample_aspect_ratio;
-    outlink->frame_rate = mainlink->frame_rate;
+    outl->frame_rate = ml->frame_rate;
 
     if ((ret = ff_framesync_configure(&s->fs)) < 0)
         return ret;
@@ -871,19 +874,19 @@ FRAMESYNC_AUXILIARY_FUNCS(convolve, ConvolveContext, fs)
 
 FRAMESYNC_DEFINE_PURE_CLASS(convolve, "convolve", convolve, convolve_options);
 
-const AVFilter ff_vf_convolve = {
-    .name          = "convolve",
-    .description   = NULL_IF_CONFIG_SMALL("Convolve first video stream with second video stream."),
+const FFFilter ff_vf_convolve = {
+    .p.name        = "convolve",
+    .p.description = NULL_IF_CONFIG_SMALL("Convolve first video stream with second video stream."),
+    .p.priv_class  = &convolve_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL | AVFILTER_FLAG_SLICE_THREADS,
     .preinit       = convolve_framesync_preinit,
     .init          = init,
     .uninit        = uninit,
     .activate      = activate,
     .priv_size     = sizeof(ConvolveContext),
-    .priv_class    = &convolve_class,
     FILTER_INPUTS(convolve_inputs),
     FILTER_OUTPUTS(convolve_outputs),
     FILTER_PIXFMTS_ARRAY(pixel_fmts_fftfilt),
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL | AVFILTER_FLAG_SLICE_THREADS,
 };
 
 #endif /* CONFIG_CONVOLVE_FILTER */
@@ -892,28 +895,28 @@ const AVFilter ff_vf_convolve = {
 
 static const AVOption deconvolve_options[] = {
     { "planes",  "set planes to deconvolve",                OFFSET(planes),   AV_OPT_TYPE_INT,   {.i64=7}, 0, 15, FLAGS },
-    { "impulse", "when to process impulses",                OFFSET(impulse),  AV_OPT_TYPE_INT,   {.i64=1}, 0,  1, FLAGS, "impulse" },
-    {   "first", "process only first impulse, ignore rest", 0,                AV_OPT_TYPE_CONST, {.i64=0}, 0,  0, FLAGS, "impulse" },
-    {   "all",   "process all impulses",                    0,                AV_OPT_TYPE_CONST, {.i64=1}, 0,  0, FLAGS, "impulse" },
+    { "impulse", "when to process impulses",                OFFSET(impulse),  AV_OPT_TYPE_INT,   {.i64=1}, 0,  1, FLAGS, .unit = "impulse" },
+    {   "first", "process only first impulse, ignore rest", 0,                AV_OPT_TYPE_CONST, {.i64=0}, 0,  0, FLAGS, .unit = "impulse" },
+    {   "all",   "process all impulses",                    0,                AV_OPT_TYPE_CONST, {.i64=1}, 0,  0, FLAGS, .unit = "impulse" },
     { "noise",   "set noise",                               OFFSET(noise),    AV_OPT_TYPE_FLOAT, {.dbl=0.0000001}, 0,  1, FLAGS },
     { NULL },
 };
 
 FRAMESYNC_DEFINE_PURE_CLASS(deconvolve, "deconvolve", convolve, deconvolve_options);
 
-const AVFilter ff_vf_deconvolve = {
-    .name          = "deconvolve",
-    .description   = NULL_IF_CONFIG_SMALL("Deconvolve first video stream with second video stream."),
+const FFFilter ff_vf_deconvolve = {
+    .p.name        = "deconvolve",
+    .p.description = NULL_IF_CONFIG_SMALL("Deconvolve first video stream with second video stream."),
+    .p.priv_class  = &deconvolve_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL | AVFILTER_FLAG_SLICE_THREADS,
     .preinit       = convolve_framesync_preinit,
     .init          = init,
     .uninit        = uninit,
     .activate      = activate,
     .priv_size     = sizeof(ConvolveContext),
-    .priv_class    = &deconvolve_class,
     FILTER_INPUTS(convolve_inputs),
     FILTER_OUTPUTS(convolve_outputs),
     FILTER_PIXFMTS_ARRAY(pixel_fmts_fftfilt),
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL | AVFILTER_FLAG_SLICE_THREADS,
 };
 
 #endif /* CONFIG_DECONVOLVE_FILTER */
@@ -922,9 +925,9 @@ const AVFilter ff_vf_deconvolve = {
 
 static const AVOption xcorrelate_options[] = {
     { "planes",  "set planes to cross-correlate",     OFFSET(planes),   AV_OPT_TYPE_INT,   {.i64=7}, 0, 15, FLAGS },
-    { "secondary", "when to process secondary frame", OFFSET(impulse),  AV_OPT_TYPE_INT,   {.i64=1}, 0,  1, FLAGS, "impulse" },
-    {   "first", "process only first secondary frame, ignore rest", 0,  AV_OPT_TYPE_CONST, {.i64=0}, 0,  0, FLAGS, "impulse" },
-    {   "all",   "process all secondary frames",                    0,  AV_OPT_TYPE_CONST, {.i64=1}, 0,  0, FLAGS, "impulse" },
+    { "secondary", "when to process secondary frame", OFFSET(impulse),  AV_OPT_TYPE_INT,   {.i64=1}, 0,  1, FLAGS, .unit = "impulse" },
+    {   "first", "process only first secondary frame, ignore rest", 0,  AV_OPT_TYPE_CONST, {.i64=0}, 0,  0, FLAGS, .unit = "impulse" },
+    {   "all",   "process all secondary frames",                    0,  AV_OPT_TYPE_CONST, {.i64=1}, 0,  0, FLAGS, .unit = "impulse" },
     { NULL },
 };
 
@@ -955,27 +958,21 @@ static const AVFilterPad xcorrelate_inputs[] = {
     },
 };
 
-static const AVFilterPad xcorrelate_outputs[] = {
-    {
-        .name          = "default",
-        .type          = AVMEDIA_TYPE_VIDEO,
-        .config_props  = config_output,
-    },
-};
+#define xcorrelate_outputs convolve_outputs
 
-const AVFilter ff_vf_xcorrelate = {
-    .name          = "xcorrelate",
-    .description   = NULL_IF_CONFIG_SMALL("Cross-correlate first video stream with second video stream."),
+const FFFilter ff_vf_xcorrelate = {
+    .p.name        = "xcorrelate",
+    .p.description = NULL_IF_CONFIG_SMALL("Cross-correlate first video stream with second video stream."),
+    .p.priv_class  = &xcorrelate_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL | AVFILTER_FLAG_SLICE_THREADS,
     .preinit       = convolve_framesync_preinit,
     .init          = init,
     .uninit        = uninit,
     .activate      = activate,
     .priv_size     = sizeof(ConvolveContext),
-    .priv_class    = &xcorrelate_class,
     FILTER_INPUTS(xcorrelate_inputs),
     FILTER_OUTPUTS(xcorrelate_outputs),
     FILTER_PIXFMTS_ARRAY(pixel_fmts_fftfilt),
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_INTERNAL | AVFILTER_FLAG_SLICE_THREADS,
 };
 
 #endif /* CONFIG_XCORRELATE_FILTER */

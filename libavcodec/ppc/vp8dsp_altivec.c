@@ -50,11 +50,12 @@ static const vec_s8 h_subpel_filters_inner[7] =
 // for 6tap filters, these are the outer two taps
 // The zeros mask off pixels 4-7 when filtering 0-3
 // and vice-versa
-static const vec_s8 h_subpel_filters_outer[3] =
+static const vec_s8 h_subpel_filters_outer[4] =
 {
     REPT4(0, 0, 2, 1),
     REPT4(0, 0, 3, 3),
     REPT4(0, 0, 1, 2),
+    REPT4(0, 0, 0, 0),
 };
 
 #define LOAD_H_SUBPEL_FILTER(i) \
@@ -311,7 +312,7 @@ static void put_vp8_pixels16_altivec(uint8_t *dst, ptrdiff_t dstride, const uint
     perm = vec_lvsl(0, src);
 #endif
 // hand-unrolling the loop by 4 gains about 15%
-// mininum execution time goes from 74 to 60 cycles
+// minimum execution time goes from 74 to 60 cycles
 // it's faster than -funroll-loops, but using
 // -funroll-loops w/ this is bad - 74 cycles again.
 // all this is on a 7450, tuning for the 7450

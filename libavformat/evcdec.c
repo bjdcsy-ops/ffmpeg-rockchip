@@ -27,6 +27,7 @@
 
 #include "avformat.h"
 #include "avio_internal.h"
+#include "demux.h"
 #include "evc.h"
 #include "internal.h"
 
@@ -102,6 +103,9 @@ static int evc_read_header(AVFormatContext *s)
     const AVBitStreamFilter *filter = av_bsf_get_by_name("evc_frame_merge");
     EVCDemuxContext *c = s->priv_data;
     int ret = 0;
+
+    if (!filter)
+        return AVERROR_BUG;
 
     st = avformat_new_stream(s, NULL);
     if (!st) {
@@ -201,17 +205,17 @@ static int evc_read_close(AVFormatContext *s)
     return 0;
 }
 
-const AVInputFormat ff_evc_demuxer = {
-    .name           = "evc",
-    .long_name      = NULL_IF_CONFIG_SMALL("EVC Annex B"),
+const FFInputFormat ff_evc_demuxer = {
+    .p.name         = "evc",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("EVC Annex B"),
+    .p.extensions   = "evc",
+    .p.flags        = AVFMT_GENERIC_INDEX | AVFMT_NOTIMESTAMPS,
+    .p.priv_class   = &evc_demuxer_class,
     .read_probe     = annexb_probe,
     .read_header    = evc_read_header, // annexb_read_header
     .read_packet    = evc_read_packet, // annexb_read_packet
     .read_close     = evc_read_close,
-    .extensions     = "evc",
-    .flags          = AVFMT_GENERIC_INDEX | AVFMT_NOTIMESTAMPS,
-    .flags_internal = FF_FMT_INIT_CLEANUP,
+    .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
     .raw_codec_id   = AV_CODEC_ID_EVC,
     .priv_data_size = sizeof(EVCDemuxContext),
-    .priv_class     = &evc_demuxer_class,
 };

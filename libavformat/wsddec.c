@@ -21,9 +21,11 @@
 
 #include "libavutil/channel_layout.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "libavutil/timecode.h"
 #include "avformat.h"
-#include "internal.h"
+#include "avio_internal.h"
+#include "demux.h"
 #include "rawdec.h"
 
 static int wsd_probe(const AVProbeData *p)
@@ -72,6 +74,7 @@ static int wsd_to_av_channel_layoyt(AVFormatContext *s, int bit)
 static int get_metadata(AVFormatContext *s, const char *const tag, const unsigned size)
 {
     uint8_t *buf;
+    int ret;
     if (!(size + 1))
         return AVERROR(ENOMEM);
 
@@ -79,9 +82,9 @@ static int get_metadata(AVFormatContext *s, const char *const tag, const unsigne
     if (!buf)
         return AVERROR(ENOMEM);
 
-    if (avio_read(s->pb, buf, size) != size) {
+    if ((ret = ffio_read_size(s->pb, buf, size)) < 0) {
         av_free(buf);
-        return AVERROR(EIO);
+        return ret;
     }
 
     if (empty_string(buf, size)) {
@@ -165,15 +168,15 @@ static int wsd_read_header(AVFormatContext *s)
     return avio_seek(pb, data_offset, SEEK_SET);
 }
 
-const AVInputFormat ff_wsd_demuxer = {
-    .name         = "wsd",
-    .long_name    = NULL_IF_CONFIG_SMALL("Wideband Single-bit Data (WSD)"),
+const FFInputFormat ff_wsd_demuxer = {
+    .p.name         = "wsd",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Wideband Single-bit Data (WSD)"),
+    .p.extensions   = "wsd",
+    .p.flags        = AVFMT_GENERIC_INDEX | AVFMT_NO_BYTE_SEEK,
+    .p.priv_class   = &ff_raw_demuxer_class,
     .read_probe   = wsd_probe,
     .read_header  = wsd_read_header,
     .read_packet  = ff_raw_read_partial_packet,
-    .extensions   = "wsd",
-    .flags        = AVFMT_GENERIC_INDEX | AVFMT_NO_BYTE_SEEK,
     .raw_codec_id = AV_CODEC_ID_DSD_MSBF,
     .priv_data_size = sizeof(FFRawDemuxerContext),
-    .priv_class     = &ff_raw_demuxer_class,
 };

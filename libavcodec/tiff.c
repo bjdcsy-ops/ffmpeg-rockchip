@@ -36,17 +36,22 @@
 #include <float.h>
 
 #include "libavutil/attributes.h"
+#include "libavutil/attributes_internal.h"
+#include "libavutil/avstring.h"
 #include "libavutil/error.h"
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/reverse.h"
 #include "avcodec.h"
 #include "bytestream.h"
 #include "codec_internal.h"
 #include "decode.h"
+#include "exif_internal.h"
 #include "faxcompr.h"
 #include "lzw.h"
 #include "tiff.h"
+#include "tiff_common.h"
 #include "tiff_data.h"
 #include "mjpegdec.h"
 #include "thread.h"
@@ -120,6 +125,8 @@ typedef struct TiffContext {
 
     int geotag_count;
     TiffGeoTag *geotags;
+
+    AVExifMetadata exif_meta;
 } TiffContext;
 
 static const float d65_white[3] = { 0.950456f, 1.f, 1.088754f };
@@ -131,36 +138,37 @@ static void tiff_set_type(TiffContext *s, enum TiffType tiff_type) {
 
 static void free_geotags(TiffContext *const s)
 {
-    int i;
-    for (i = 0; i < s->geotag_count; i++) {
-        if (s->geotags[i].val)
-            av_freep(&s->geotags[i].val);
-    }
+    for (int i = 0; i < s->geotag_count; i++)
+        av_freep(&s->geotags[i].val);
     av_freep(&s->geotags);
     s->geotag_count = 0;
 }
 
-#define RET_GEOKEY(TYPE, array, element)\
-    if (key >= TIFF_##TYPE##_KEY_ID_OFFSET &&\
-        key - TIFF_##TYPE##_KEY_ID_OFFSET < FF_ARRAY_ELEMS(tiff_##array##_name_type_map))\
-        return tiff_##array##_name_type_map[key - TIFF_##TYPE##_KEY_ID_OFFSET].element;
-
 static const char *get_geokey_name(int key)
 {
-    RET_GEOKEY(VERT, vert, name);
-    RET_GEOKEY(PROJ, proj, name);
-    RET_GEOKEY(GEOG, geog, name);
-    RET_GEOKEY(CONF, conf, name);
+#define RET_GEOKEY_STR(TYPE, array)\
+    if (key >= TIFF_##TYPE##_KEY_ID_OFFSET &&\
+        key - TIFF_##TYPE##_KEY_ID_OFFSET < FF_ARRAY_ELEMS(tiff_##array##_name_type_map))\
+        return tiff_##array##_name_type_string + tiff_##array##_name_type_map[key - TIFF_##TYPE##_KEY_ID_OFFSET].offset;
+
+    RET_GEOKEY_STR(VERT, vert);
+    RET_GEOKEY_STR(PROJ, proj);
+    RET_GEOKEY_STR(GEOG, geog);
+    RET_GEOKEY_STR(CONF, conf);
 
     return NULL;
 }
 
 static int get_geokey_type(int key)
 {
-    RET_GEOKEY(VERT, vert, type);
-    RET_GEOKEY(PROJ, proj, type);
-    RET_GEOKEY(GEOG, geog, type);
-    RET_GEOKEY(CONF, conf, type);
+#define RET_GEOKEY_TYPE(TYPE, array)\
+    if (key >= TIFF_##TYPE##_KEY_ID_OFFSET &&\
+        key - TIFF_##TYPE##_KEY_ID_OFFSET < FF_ARRAY_ELEMS(tiff_##array##_name_type_map))\
+        return tiff_##array##_name_type_map[key - TIFF_##TYPE##_KEY_ID_OFFSET].type;
+    RET_GEOKEY_TYPE(VERT, vert);
+    RET_GEOKEY_TYPE(PROJ, proj);
+    RET_GEOKEY_TYPE(GEOG, geog);
+    RET_GEOKEY_TYPE(CONF, conf);
 
     return AVERROR_INVALIDDATA;
 }
@@ -172,26 +180,24 @@ static int cmp_id_key(const void *id, const void *k)
 
 static const char *search_keyval(const TiffGeoTagKeyName *keys, int n, int id)
 {
-    TiffGeoTagKeyName *r = bsearch(&id, keys, n, sizeof(keys[0]), cmp_id_key);
+    const TiffGeoTagKeyName *r = bsearch(&id, keys, n, sizeof(keys[0]), cmp_id_key);
     if(r)
         return r->name;
 
     return NULL;
 }
 
-static char *get_geokey_val(int key, int val)
+static const char *get_geokey_val(int key, uint16_t val)
 {
-    char *ap;
-
     if (val == TIFF_GEO_KEY_UNDEFINED)
-        return av_strdup("undefined");
+        return "undefined";
     if (val == TIFF_GEO_KEY_USER_DEFINED)
-        return av_strdup("User-Defined");
+        return "User-Defined";
 
 #define RET_GEOKEY_VAL(TYPE, array)\
     if (val >= TIFF_##TYPE##_OFFSET &&\
         val - TIFF_##TYPE##_OFFSET < FF_ARRAY_ELEMS(tiff_##array##_codes))\
-        return av_strdup(tiff_##array##_codes[val - TIFF_##TYPE##_OFFSET]);
+        return tiff_##array##_codes[val - TIFF_##TYPE##_OFFSET];
 
     switch (key) {
     case TIFF_GT_MODEL_TYPE_GEOKEY:
@@ -224,13 +230,9 @@ static char *get_geokey_val(int key, int val)
         RET_GEOKEY_VAL(PRIME_MERIDIAN, prime_meridian);
         break;
     case TIFF_PROJECTED_CS_TYPE_GEOKEY:
-        ap = av_strdup(search_keyval(tiff_proj_cs_type_codes, FF_ARRAY_ELEMS(tiff_proj_cs_type_codes), val));
-        if(ap) return ap;
-        break;
+        return search_keyval(tiff_proj_cs_type_codes, FF_ARRAY_ELEMS(tiff_proj_cs_type_codes), val);
     case TIFF_PROJECTION_GEOKEY:
-        ap = av_strdup(search_keyval(tiff_projection_codes, FF_ARRAY_ELEMS(tiff_projection_codes), val));
-        if(ap) return ap;
-        break;
+        return search_keyval(tiff_projection_codes, FF_ARRAY_ELEMS(tiff_projection_codes), val);
     case TIFF_PROJ_COORD_TRANS_GEOKEY:
         RET_GEOKEY_VAL(COORD_TRANS, coord_trans);
         break;
@@ -241,10 +243,7 @@ static char *get_geokey_val(int key, int val)
 
     }
 
-    ap = av_malloc(14);
-    if (ap)
-        snprintf(ap, 14, "Unknown-%d", val);
-    return ap;
+    return NULL;
 }
 
 static char *doubles2str(double *dp, int count, const char *sep)
@@ -277,9 +276,9 @@ static int add_metadata(int count, int type,
                         const char *name, const char *sep, TiffContext *s, AVFrame *frame)
 {
     switch(type) {
-    case TIFF_DOUBLE: return ff_tadd_doubles_metadata(count, name, sep, &s->gb, s->le, &frame->metadata);
-    case TIFF_SHORT : return ff_tadd_shorts_metadata(count, name, sep, &s->gb, s->le, 0, &frame->metadata);
-    case TIFF_STRING: return ff_tadd_string_metadata(count, name, &s->gb, s->le, &frame->metadata);
+    case AV_TIFF_DOUBLE: return ff_tadd_doubles_metadata(count, name, sep, &s->gb, s->le, &frame->metadata);
+    case AV_TIFF_SHORT : return ff_tadd_shorts_metadata(count, name, sep, &s->gb, s->le, 0, &frame->metadata);
+    case AV_TIFF_STRING: return ff_tadd_string_metadata(count, name, &s->gb, s->le, &frame->metadata);
     default         : return AVERROR_INVALIDDATA;
     };
 }
@@ -427,7 +426,8 @@ static void av_always_inline horizontal_fill(TiffContext *s,
             uint8_t shift = is_dng ? 0 : 16 - bpp;
             GetBitContext gb;
 
-            init_get_bits8(&gb, src, width);
+            av_unused int ret = init_get_bits8(&gb, src, width);
+            av_assert1(ret >= 0);
             for (int i = 0; i < s->width; i++) {
                 dst16[i] = get_bits(&gb, bpp) << shift;
             }
@@ -461,7 +461,8 @@ static void unpack_gray(TiffContext *s, AVFrame *p,
     GetBitContext gb;
     uint16_t *dst = (uint16_t *)(p->data[0] + lnum * p->linesize[0]);
 
-    init_get_bits8(&gb, src, width);
+    av_unused int ret = init_get_bits8(&gb, src, width);
+    av_assert1(ret >= 0);
 
     for (int i = 0; i < s->width; i++) {
         dst[i] = get_bits(&gb, bpp);
@@ -1273,21 +1274,21 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
     off = bytestream2_tell(&s->gb);
     if (count == 1) {
         switch (type) {
-        case TIFF_BYTE:
-        case TIFF_SHORT:
-        case TIFF_LONG:
+        case AV_TIFF_BYTE:
+        case AV_TIFF_SHORT:
+        case AV_TIFF_LONG:
             value = ff_tget(&s->gb, type, s->le);
             break;
-        case TIFF_RATIONAL:
-            value  = ff_tget(&s->gb, TIFF_LONG, s->le);
-            value2 = ff_tget(&s->gb, TIFF_LONG, s->le);
+        case AV_TIFF_RATIONAL:
+            value  = ff_tget_long(&s->gb, s->le);
+            value2 = ff_tget_long(&s->gb, s->le);
             if (!value2) {
                 av_log(s->avctx, AV_LOG_WARNING, "Invalid denominator in rational\n");
                 value2 = 1;
             }
 
             break;
-        case TIFF_STRING:
+        case AV_TIFF_STRING:
             if (count <= 4) {
                 break;
             }
@@ -1301,9 +1302,13 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
         s->is_thumbnail = (value != 0);
         break;
     case TIFF_WIDTH:
+        if (value > INT_MAX)
+            return AVERROR_INVALIDDATA;
         s->width = value;
         break;
     case TIFF_HEIGHT:
+        if (value > INT_MAX)
+            return AVERROR_INVALIDDATA;
         s->height = value;
         break;
     case TIFF_BPP:
@@ -1318,9 +1323,9 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
             s->bpp = value;
         else {
             switch (type) {
-            case TIFF_BYTE:
-            case TIFF_SHORT:
-            case TIFF_LONG:
+            case AV_TIFF_BYTE:
+            case AV_TIFF_SHORT:
+            case AV_TIFF_LONG:
                 s->bpp = 0;
                 if (bytestream2_get_bytes_left(&s->gb) < type_sizes[type] * count)
                     return AVERROR_INVALIDDATA;
@@ -1387,7 +1392,7 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
         }
         break;
     case TIFF_ROWSPERSTRIP:
-        if (!value || (type == TIFF_LONG && value == UINT_MAX))
+        if (!value || (type == AV_TIFF_LONG && value == UINT_MAX))
             value = s->height;
         s->rps = FFMIN(value, s->height);
         break;
@@ -1435,19 +1440,25 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
         s->tile_byte_counts_offset = off;
         break;
     case TIFF_TILE_LENGTH:
+        if (value > INT_MAX)
+            return AVERROR_INVALIDDATA;
         s->tile_length = value;
         break;
     case TIFF_TILE_WIDTH:
+        if (value > INT_MAX)
+            return AVERROR_INVALIDDATA;
         s->tile_width = value;
         break;
     case TIFF_PREDICTOR:
+        if (value > INT_MAX)
+            return AVERROR_INVALIDDATA;
         s->predictor = value;
         break;
     case TIFF_SUB_IFDS:
         if (count == 1)
             s->sub_ifd = value;
         else if (count > 1)
-            s->sub_ifd = ff_tget(&s->gb, TIFF_LONG, s->le); /** Only get the first SubIFD */
+            s->sub_ifd = ff_tget_long(&s->gb, s->le); /** Only get the first SubIFD */
         break;
     case TIFF_GRAY_RESPONSE_CURVE:
     case DNG_LINEARIZATION_TABLE:
@@ -1462,18 +1473,18 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
             return AVERROR_INVALIDDATA;
         s->black_level[0] = value / (float)value2;
         for (int i = 0; i < count && count > 1; i++) {
-            if (type == TIFF_RATIONAL) {
-                value  = ff_tget(&s->gb, TIFF_LONG, s->le);
-                value2 = ff_tget(&s->gb, TIFF_LONG, s->le);
+            if (type == AV_TIFF_RATIONAL) {
+                value  = ff_tget_long(&s->gb, s->le);
+                value2 = ff_tget_long(&s->gb, s->le);
                 if (!value2) {
                     av_log(s->avctx, AV_LOG_WARNING, "Invalid denominator\n");
                     value2 = 1;
                 }
 
                 s->black_level[i] = value / (float)value2;
-            } else if (type == TIFF_SRATIONAL) {
-                int value  = ff_tget(&s->gb, TIFF_LONG, s->le);
-                int value2 = ff_tget(&s->gb, TIFF_LONG, s->le);
+            } else if (type == AV_TIFF_SRATIONAL) {
+                int value  = ff_tget_long(&s->gb, s->le);
+                int value2 = ff_tget_long(&s->gb, s->le);
                 if (!value2) {
                     av_log(s->avctx, AV_LOG_WARNING, "Invalid denominator\n");
                     value2 = 1;
@@ -1585,12 +1596,18 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
         }
         break;
     case TIFF_T4OPTIONS:
-        if (s->compr == TIFF_G3)
+        if (s->compr == TIFF_G3) {
+            if (value > INT_MAX)
+                return AVERROR_INVALIDDATA;
             s->fax_opts = value;
+        }
         break;
     case TIFF_T6OPTIONS:
-        if (s->compr == TIFF_G4)
+        if (s->compr == TIFF_G4) {
+            if (value > INT_MAX)
+                return AVERROR_INVALIDDATA;
             s->fax_opts = value;
+        }
         break;
 #define ADD_METADATA(count, name, sep)\
     if ((ret = add_metadata(count, type, name, sep, s, frame)) < 0) {\
@@ -1630,14 +1647,20 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
             goto end;
         }
         for (i = 0; i < s->geotag_count; i++) {
+            unsigned val;
             s->geotags[i].key    = ff_tget_short(&s->gb, s->le);
             s->geotags[i].type   = ff_tget_short(&s->gb, s->le);
             s->geotags[i].count  = ff_tget_short(&s->gb, s->le);
+            val                  = ff_tget_short(&s->gb, s->le);
 
-            if (!s->geotags[i].type)
-                s->geotags[i].val  = get_geokey_val(s->geotags[i].key, ff_tget_short(&s->gb, s->le));
-            else
-                s->geotags[i].offset = ff_tget_short(&s->gb, s->le);
+            if (!s->geotags[i].type) {
+                const char *str = get_geokey_val(s->geotags[i].key, val);
+
+                s->geotags[i].val = str ? av_strdup(str) : av_asprintf("Unknown-%u", val);
+                if (!s->geotags[i].val)
+                    return AVERROR(ENOMEM);
+            } else
+                s->geotags[i].offset = val;
         }
         break;
     case TIFF_GEO_DOUBLE_PARAMS:
@@ -1701,16 +1724,16 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
         break;
     case TIFF_ICC_PROFILE:
         gb_temp = s->gb;
-        bytestream2_seek(&gb_temp, SEEK_SET, off);
+        bytestream2_seek(&gb_temp, off, SEEK_SET);
 
         if (bytestream2_get_bytes_left(&gb_temp) < count)
             return AVERROR_INVALIDDATA;
 
-        sd = av_frame_new_side_data(frame, AV_FRAME_DATA_ICC_PROFILE, count);
-        if (!sd)
-            return AVERROR(ENOMEM);
-
-        bytestream2_get_bufferu(&gb_temp, sd->data, count);
+        ret = ff_frame_new_side_data(s->avctx, frame, AV_FRAME_DATA_ICC_PROFILE, count, &sd);
+        if (ret < 0)
+            return ret;
+        if (sd)
+            bytestream2_get_bufferu(&gb_temp, sd->data, count);
         break;
     case TIFF_ARTIST:
         ADD_METADATA(count, "artist", NULL);
@@ -1744,7 +1767,7 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
         // need to seek back to re-read the page number
         bytestream2_seek(&s->gb, -count * sizeof(uint16_t), SEEK_CUR);
         // read the page number
-        s->cur_page = ff_tget(&s->gb, TIFF_SHORT, s->le);
+        s->cur_page = ff_tget_short(&s->gb, s->le);
         // get back to where we were before the previous seek
         bytestream2_seek(&s->gb, count * sizeof(uint16_t) - sizeof(uint16_t), SEEK_CUR);
         break;
@@ -1766,12 +1789,12 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
         }
         break;
     case DNG_ANALOG_BALANCE:
-        if (type != TIFF_RATIONAL)
+        if (type != AV_TIFF_RATIONAL)
             break;
 
         for (int i = 0; i < 3; i++) {
-            value  = ff_tget(&s->gb, TIFF_LONG, s->le);
-            value2 = ff_tget(&s->gb, TIFF_LONG, s->le);
+            value  = ff_tget_long(&s->gb, s->le);
+            value2 = ff_tget_long(&s->gb, s->le);
             if (!value2) {
                 av_log(s->avctx, AV_LOG_WARNING, "Invalid denominator\n");
                 value2 = 1;
@@ -1781,12 +1804,12 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
         }
         break;
     case DNG_AS_SHOT_NEUTRAL:
-        if (type != TIFF_RATIONAL)
+        if (type != AV_TIFF_RATIONAL)
             break;
 
         for (int i = 0; i < 3; i++) {
-            value  = ff_tget(&s->gb, TIFF_LONG, s->le);
-            value2 = ff_tget(&s->gb, TIFF_LONG, s->le);
+            value  = ff_tget_long(&s->gb, s->le);
+            value2 = ff_tget_long(&s->gb, s->le);
             if (!value2) {
                 av_log(s->avctx, AV_LOG_WARNING, "Invalid denominator\n");
                 value2 = 1;
@@ -1796,12 +1819,12 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
         }
         break;
     case DNG_AS_SHOT_WHITE_XY:
-        if (type != TIFF_RATIONAL)
+        if (type != AV_TIFF_RATIONAL)
             break;
 
         for (int i = 0; i < 2; i++) {
-            value  = ff_tget(&s->gb, TIFF_LONG, s->le);
-            value2 = ff_tget(&s->gb, TIFF_LONG, s->le);
+            value  = ff_tget_long(&s->gb, s->le);
+            value2 = ff_tget_long(&s->gb, s->le);
             if (!value2) {
                 av_log(s->avctx, AV_LOG_WARNING, "Invalid denominator\n");
                 value2 = 1;
@@ -1818,8 +1841,8 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
     case DNG_COLOR_MATRIX2:
         for (int i = 0; i < 3; i++) {
             for (int j = 0; j < 3; j++) {
-                int value  = ff_tget(&s->gb, TIFF_LONG, s->le);
-                int value2 = ff_tget(&s->gb, TIFF_LONG, s->le);
+                int value  = ff_tget_long(&s->gb, s->le);
+                int value2 = ff_tget_long(&s->gb, s->le);
                 if (!value2) {
                     av_log(s->avctx, AV_LOG_WARNING, "Invalid denominator\n");
                     value2 = 1;
@@ -1833,8 +1856,8 @@ static int tiff_decode_tag(TiffContext *s, AVFrame *frame)
     case DNG_CAMERA_CALIBRATION2:
         for (int i = 0; i < 3; i++) {
             for (int j = 0; j < 3; j++) {
-                int value  = ff_tget(&s->gb, TIFF_LONG, s->le);
-                int value2 = ff_tget(&s->gb, TIFF_LONG, s->le);
+                int value  = ff_tget_long(&s->gb, s->le);
+                int value2 = ff_tget_long(&s->gb, s->le);
                 if (!value2) {
                     av_log(s->avctx, AV_LOG_WARNING, "Invalid denominator\n");
                     value2 = 1;
@@ -1916,6 +1939,12 @@ static int decode_frame(AVCodecContext *avctx, AVFrame *p,
     int retry_for_subifd, retry_for_page;
     int is_dng;
     int has_tile_bits, has_strip_bits;
+
+    av_exif_free(&s->exif_meta);
+    /* this will not parse the image data */
+    ret = av_exif_parse_buffer(avctx, avpkt->data, avpkt->size, &s->exif_meta, AV_EXIF_TIFF_HEADER);
+    if (ret < 0)
+        av_log(avctx, AV_LOG_ERROR, "could not parse EXIF data: %s\n", av_err2str(ret));
 
     bytestream2_init(&s->gb, avpkt->data, avpkt->size);
 
@@ -2031,7 +2060,8 @@ again:
             av_log(avctx, AV_LOG_WARNING, "Type of GeoTIFF key %d is wrong\n", s->geotags[i].key);
             continue;
         }
-        ret = av_dict_set(&p->metadata, keyname, s->geotags[i].val, 0);
+        ret = av_dict_set(&p->metadata, keyname, s->geotags[i].val, AV_DICT_DONT_STRDUP_VAL);
+        s->geotags[i].val = NULL;
         if (ret<0) {
             av_log(avctx, AV_LOG_ERROR, "Writing metadata with key '%s' failed\n", keyname);
             return ret;
@@ -2265,8 +2295,10 @@ again:
             group_size = s->width * channels;
 
             tmpbuf = av_malloc(ssize);
-            if (!tmpbuf)
+            if (!tmpbuf) {
+                av_free(five_planes);
                 return AVERROR(ENOMEM);
+            }
 
             if (s->avctx->pix_fmt == AV_PIX_FMT_RGBF32LE ||
                 s->avctx->pix_fmt == AV_PIX_FMT_RGBAF32LE) {
@@ -2379,7 +2411,10 @@ again:
         }
     }
 
-    p->flags |= AV_FRAME_FLAG_KEY;
+    ret = ff_decode_exif_attach_ifd(avctx, p, &s->exif_meta);
+    if (ret < 0)
+        av_log(avctx, AV_LOG_ERROR, "error attaching EXIF ifd: %s\n", av_err2str(ret));
+
     *got_frame = 1;
 
     return avpkt->size;
@@ -2388,7 +2423,6 @@ again:
 static av_cold int tiff_init(AVCodecContext *avctx)
 {
     TiffContext *s = avctx->priv_data;
-    const AVCodec *codec;
     int ret;
 
     s->width  = 0;
@@ -2408,18 +2442,15 @@ static av_cold int tiff_init(AVCodecContext *avctx)
         return AVERROR(ENOMEM);
 
     /* Prepare everything needed for JPEG decoding */
-    codec = avcodec_find_decoder(AV_CODEC_ID_MJPEG);
-    if (!codec)
-        return AVERROR_BUG;
-    s->avctx_mjpeg = avcodec_alloc_context3(codec);
+    EXTERN const FFCodec ff_mjpeg_decoder;
+    s->avctx_mjpeg = avcodec_alloc_context3(&ff_mjpeg_decoder.p);
     if (!s->avctx_mjpeg)
         return AVERROR(ENOMEM);
     s->avctx_mjpeg->flags = avctx->flags;
     s->avctx_mjpeg->flags2 = avctx->flags2;
-    s->avctx_mjpeg->dct_algo = avctx->dct_algo;
     s->avctx_mjpeg->idct_algo = avctx->idct_algo;
     s->avctx_mjpeg->max_pixels = avctx->max_pixels;
-    ret = avcodec_open2(s->avctx_mjpeg, codec, NULL);
+    ret = avcodec_open2(s->avctx_mjpeg, NULL, NULL);
     if (ret < 0) {
         return ret;
     }
@@ -2432,6 +2463,7 @@ static av_cold int tiff_end(AVCodecContext *avctx)
     TiffContext *const s = avctx->priv_data;
 
     free_geotags(s);
+    av_exif_free(&s->exif_meta);
 
     ff_lzw_decode_close(&s->lzw);
     av_freep(&s->deinvert_buf);

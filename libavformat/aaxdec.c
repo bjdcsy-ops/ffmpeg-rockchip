@@ -20,6 +20,7 @@
  */
 
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "avformat.h"
 #include "avio_internal.h"
 #include "demux.h"
@@ -344,9 +345,10 @@ static int aax_read_packet(AVFormatContext *s, AVPacket *pkt)
             extradata = av_malloc(extradata_size + AV_INPUT_BUFFER_PADDING_SIZE);
             if (!extradata)
                 return AVERROR(ENOMEM);
-            if (avio_read(pb, extradata, extradata_size) != extradata_size) {
+            ret = ffio_read_size(pb, extradata, extradata_size);
+            if (ret < 0) {
                 av_free(extradata);
-                return AVERROR(EIO);
+                return ret;
             }
             memset(extradata + extradata_size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
         }
@@ -355,7 +357,7 @@ static int aax_read_packet(AVFormatContext *s, AVPacket *pkt)
     ret = av_get_packet(pb, pkt, size);
     if (ret != size) {
         av_free(extradata);
-        return ret < 0 ? ret : AVERROR(EIO);
+        return ret < 0 ? ret : AVERROR_INVALIDDATA;
     }
     pkt->duration = 1;
     pkt->stream_index = 0;
@@ -383,15 +385,15 @@ static int aax_read_close(AVFormatContext *s)
     return 0;
 }
 
-const AVInputFormat ff_aax_demuxer = {
-    .name           = "aax",
-    .long_name      = NULL_IF_CONFIG_SMALL("CRI AAX"),
+const FFInputFormat ff_aax_demuxer = {
+    .p.name         = "aax",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("CRI AAX"),
+    .p.extensions   = "aax",
+    .p.flags        = AVFMT_GENERIC_INDEX,
     .priv_data_size = sizeof(AAXContext),
-    .flags_internal = FF_FMT_INIT_CLEANUP,
+    .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
     .read_probe     = aax_probe,
     .read_header    = aax_read_header,
     .read_packet    = aax_read_packet,
     .read_close     = aax_read_close,
-    .extensions     = "aax",
-    .flags          = AVFMT_GENERIC_INDEX,
 };

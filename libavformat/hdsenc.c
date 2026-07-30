@@ -29,10 +29,12 @@
 #include "mux.h"
 #include "os_support.h"
 
+#include "libavutil/attributes_internal.h"
 #include "libavutil/avstring.h"
 #include "libavutil/base64.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/mathematics.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 
 typedef struct Fragment {
@@ -112,11 +114,7 @@ static int parse_header(OutputStream *os, const uint8_t *buf, int buf_size)
     return 0;
 }
 
-#if FF_API_AVIO_WRITE_NONCONST
-static int hds_write(void *opaque, uint8_t *buf, int buf_size)
-#else
 static int hds_write(void *opaque, const uint8_t *buf, int buf_size)
-#endif
 {
     OutputStream *os = opaque;
     if (os->out) {
@@ -314,7 +312,6 @@ static void close_file(AVFormatContext *s, OutputStream *os)
 static int hds_write_header(AVFormatContext *s)
 {
     HDSContext *c = s->priv_data;
-    const AVOutputFormat *oformat;
     int ret = 0, i;
 
     if (mkdir(s->url, 0777) == -1 && errno != EEXIST) {
@@ -322,10 +319,6 @@ static int hds_write_header(AVFormatContext *s)
         return AVERROR(errno);
     }
 
-    oformat = av_guess_format("flv", NULL, NULL);
-    if (!oformat) {
-        return AVERROR_MUXER_NOT_FOUND;
-    }
 
     c->streams = av_calloc(s->nb_streams, sizeof(*c->streams));
     if (!c->streams) {
@@ -366,7 +359,8 @@ static int hds_write_header(AVFormatContext *s)
                 return AVERROR(ENOMEM);
             }
             os->ctx = ctx;
-            ctx->oformat = oformat;
+            EXTERN const FFOutputFormat ff_flv_muxer;
+            ctx->oformat = &ff_flv_muxer.p;
             ctx->interrupt_callback = s->interrupt_callback;
             ctx->flags = s->flags;
 

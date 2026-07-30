@@ -33,11 +33,13 @@
 #include <media/NdkImageReader.h>
 
 #include "libavformat/avformat.h"
+#include "libavformat/demux.h"
 #include "libavformat/internal.h"
 #include "libavutil/avstring.h"
 #include "libavutil/display.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/log.h"
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/parseutils.h"
 #include "libavutil/pixfmt.h"
@@ -419,7 +421,7 @@ static void image_available(void *context, AImageReader *reader)
         }
     }
 
-    pkt_buffer_size = av_image_get_buffer_size(ctx->image_format, ctx->width, ctx->height, 32);
+    pkt_buffer_size = av_image_get_buffer_size(ctx->image_format, ctx->width, ctx->height, 1);
     AImage_getTimestamp(image, &image_timestamp);
 
     AImage_getPlaneRowStride(image, 0, &image_linestrides[0]);
@@ -458,7 +460,7 @@ static void image_available(void *context, AImageReader *reader)
     av_image_copy_to_buffer(pkt.data, pkt_buffer_size,
                             (const uint8_t * const *) image_plane_data,
                             image_linestrides, ctx->image_format,
-                            ctx->width, ctx->height, 32);
+                            ctx->width, ctx->height, 1);
 
     ret = av_thread_message_queue_send(ctx->input_queue, &pkt, AV_THREAD_MESSAGE_NONBLOCK);
 
@@ -860,13 +862,13 @@ static const AVClass android_camera_class = {
     .category   = AV_CLASS_CATEGORY_DEVICE_VIDEO_INPUT,
 };
 
-const AVInputFormat ff_android_camera_demuxer = {
-    .name           = "android_camera",
-    .long_name      = NULL_IF_CONFIG_SMALL("Android camera input device"),
+const FFInputFormat ff_android_camera_demuxer = {
+    .p.name         = "android_camera",
+    .p.long_name    = NULL_IF_CONFIG_SMALL("Android camera input device"),
+    .p.flags        = AVFMT_NOFILE,
+    .p.priv_class   = &android_camera_class,
     .priv_data_size = sizeof(AndroidCameraCtx),
     .read_header    = android_camera_read_header,
     .read_packet    = android_camera_read_packet,
     .read_close     = android_camera_read_close,
-    .flags          = AVFMT_NOFILE,
-    .priv_class     = &android_camera_class,
 };

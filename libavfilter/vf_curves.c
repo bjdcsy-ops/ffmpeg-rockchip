@@ -18,6 +18,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "libavutil/bprint.h"
 #include "libavutil/eval.h"
@@ -28,7 +29,7 @@
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
 #include "drawutils.h"
-#include "internal.h"
+#include "filters.h"
 #include "video.h"
 
 #define R 0
@@ -91,18 +92,18 @@ typedef struct ThreadData {
 #define OFFSET(x) offsetof(CurvesContext, x)
 #define FLAGS AV_OPT_FLAG_FILTERING_PARAM|AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_RUNTIME_PARAM
 static const AVOption curves_options[] = {
-    { "preset", "select a color curves preset", OFFSET(preset), AV_OPT_TYPE_INT, {.i64=PRESET_NONE}, PRESET_NONE, NB_PRESETS-1, FLAGS, "preset_name" },
-        { "none",               NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_NONE},                 0, 0, FLAGS, "preset_name" },
-        { "color_negative",     NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_COLOR_NEGATIVE},       0, 0, FLAGS, "preset_name" },
-        { "cross_process",      NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_CROSS_PROCESS},        0, 0, FLAGS, "preset_name" },
-        { "darker",             NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_DARKER},               0, 0, FLAGS, "preset_name" },
-        { "increase_contrast",  NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_INCREASE_CONTRAST},    0, 0, FLAGS, "preset_name" },
-        { "lighter",            NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_LIGHTER},              0, 0, FLAGS, "preset_name" },
-        { "linear_contrast",    NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_LINEAR_CONTRAST},      0, 0, FLAGS, "preset_name" },
-        { "medium_contrast",    NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_MEDIUM_CONTRAST},      0, 0, FLAGS, "preset_name" },
-        { "negative",           NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_NEGATIVE},             0, 0, FLAGS, "preset_name" },
-        { "strong_contrast",    NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_STRONG_CONTRAST},      0, 0, FLAGS, "preset_name" },
-        { "vintage",            NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_VINTAGE},              0, 0, FLAGS, "preset_name" },
+    { "preset", "select a color curves preset", OFFSET(preset), AV_OPT_TYPE_INT, {.i64=PRESET_NONE}, PRESET_NONE, NB_PRESETS-1, FLAGS, .unit = "preset_name" },
+        { "none",               NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_NONE},                 0, 0, FLAGS, .unit = "preset_name" },
+        { "color_negative",     NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_COLOR_NEGATIVE},       0, 0, FLAGS, .unit = "preset_name" },
+        { "cross_process",      NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_CROSS_PROCESS},        0, 0, FLAGS, .unit = "preset_name" },
+        { "darker",             NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_DARKER},               0, 0, FLAGS, .unit = "preset_name" },
+        { "increase_contrast",  NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_INCREASE_CONTRAST},    0, 0, FLAGS, .unit = "preset_name" },
+        { "lighter",            NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_LIGHTER},              0, 0, FLAGS, .unit = "preset_name" },
+        { "linear_contrast",    NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_LINEAR_CONTRAST},      0, 0, FLAGS, .unit = "preset_name" },
+        { "medium_contrast",    NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_MEDIUM_CONTRAST},      0, 0, FLAGS, .unit = "preset_name" },
+        { "negative",           NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_NEGATIVE},             0, 0, FLAGS, .unit = "preset_name" },
+        { "strong_contrast",    NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_STRONG_CONTRAST},      0, 0, FLAGS, .unit = "preset_name" },
+        { "vintage",            NULL, 0, AV_OPT_TYPE_CONST, {.i64=PRESET_VINTAGE},              0, 0, FLAGS, .unit = "preset_name" },
     { "master","set master points coordinates",OFFSET(comp_points_str[NB_COMP]), AV_OPT_TYPE_STRING, {.str=NULL}, .flags = FLAGS },
     { "m",     "set master points coordinates",OFFSET(comp_points_str[NB_COMP]), AV_OPT_TYPE_STRING, {.str=NULL}, .flags = FLAGS },
     { "red",   "set red points coordinates",   OFFSET(comp_points_str[0]), AV_OPT_TYPE_STRING, {.str=NULL}, .flags = FLAGS },
@@ -114,9 +115,9 @@ static const AVOption curves_options[] = {
     { "all",   "set points coordinates for all components", OFFSET(comp_points_str_all), AV_OPT_TYPE_STRING, {.str=NULL}, .flags = FLAGS },
     { "psfile", "set Photoshop curves file name", OFFSET(psfile), AV_OPT_TYPE_STRING, {.str=NULL}, .flags = FLAGS },
     { "plot", "save Gnuplot script of the curves in specified file", OFFSET(plot_filename), AV_OPT_TYPE_STRING, {.str=NULL}, .flags = FLAGS },
-    { "interp", "specify the kind of interpolation", OFFSET(interp), AV_OPT_TYPE_INT, {.i64=INTERP_NATURAL}, INTERP_NATURAL, NB_INTERPS-1, FLAGS, "interp_name" },
-        { "natural", "natural cubic spline", 0, AV_OPT_TYPE_CONST, {.i64=INTERP_NATURAL}, 0, 0, FLAGS, "interp_name" },
-        { "pchip",   "monotonically cubic interpolation", 0, AV_OPT_TYPE_CONST, {.i64=INTERP_PCHIP},   0, 0, FLAGS, "interp_name" },
+    { "interp", "specify the kind of interpolation", OFFSET(interp), AV_OPT_TYPE_INT, {.i64=INTERP_NATURAL}, INTERP_NATURAL, NB_INTERPS-1, FLAGS, .unit = "interp_name" },
+    { "natural", "natural cubic spline", 0, AV_OPT_TYPE_CONST, {.i64=INTERP_NATURAL}, 0, 0, FLAGS, .unit = "interp_name" },
+    { "pchip",   "monotonically cubic interpolation", 0, AV_OPT_TYPE_CONST, {.i64=INTERP_PCHIP},   0, 0, FLAGS, .unit = "interp_name" },
     { NULL }
 };
 
@@ -181,20 +182,22 @@ static int parse_points_str(AVFilterContext *ctx, struct keypoint **points, cons
         if (point->x < 0 || point->x > 1 || point->y < 0 || point->y > 1) {
             av_log(ctx, AV_LOG_ERROR, "Invalid key point coordinates (%f;%f), "
                    "x and y must be in the [0;1] range.\n", point->x, point->y);
+            av_free(point);
             return AVERROR(EINVAL);
         }
-        if (!*points)
-            *points = point;
         if (last) {
             if ((int)(last->x * scale) >= (int)(point->x * scale)) {
                 av_log(ctx, AV_LOG_ERROR, "Key point coordinates (%f;%f) "
                        "and (%f;%f) are too close from each other or not "
                        "strictly increasing on the x-axis\n",
                        last->x, last->y, point->x, point->y);
+                av_free(point);
                 return AVERROR(EINVAL);
             }
             last->next = point;
         }
+        if (!*points)
+            *points = point;
         last = point;
     }
 
@@ -490,7 +493,7 @@ static inline int interpolate_pchip(void *log_ctx, uint16_t *y,
         goto end;
     }
 
-    fi = xi + n;     /* output values at inteval endpoints */
+    fi = xi + n;     /* output values at interval endpoints */
     di = fi + n;     /* output slope wrt normalized input at interval endpoints */
     hi = di + n;     /* interval widths */
     mi = hi + n - 1; /* linear slope over intervals */
@@ -585,7 +588,7 @@ static int parse_psfile(AVFilterContext *ctx, const char *fname)
     CurvesContext *curves = ctx->priv;
     uint8_t *buf;
     size_t size;
-    int i, ret, av_unused(version), nb_curves;
+    int i, ret, version av_unused, nb_curves;
     AVBPrint ptstr;
     static const int comp_ids[] = {3, 0, 1, 2};
 
@@ -638,7 +641,7 @@ end:
 
 static int dump_curves(const char *fname, uint16_t *graph[NB_COMP + 1],
                        struct keypoint *comp_points[NB_COMP + 1],
-                       int lut_size)
+                       int lut_size, void *log_ctx)
 {
     int i;
     AVBPrint buf;
@@ -650,7 +653,7 @@ static int dump_curves(const char *fname, uint16_t *graph[NB_COMP + 1],
 
     if (!f) {
         int ret = AVERROR(errno);
-        av_log(NULL, AV_LOG_ERROR, "Cannot open file '%s' for writing: %s\n",
+        av_log(log_ctx, AV_LOG_ERROR, "Cannot open file '%s' for writing: %s\n",
                fname, av_err2str(ret));
         return ret;
     }
@@ -754,8 +757,8 @@ static int filter_slice_packed(AVFilterContext *ctx, void *arg, int jobnr, int n
     const uint8_t g = curves->rgba_map[G];
     const uint8_t b = curves->rgba_map[B];
     const uint8_t a = curves->rgba_map[A];
-    const int slice_start = (in->height *  jobnr   ) / nb_jobs;
-    const int slice_end   = (in->height * (jobnr+1)) / nb_jobs;
+    const int slice_start = ff_slice_pos(in->height, jobnr, nb_jobs);
+    const int slice_end   = ff_slice_pos(in->height, jobnr + 1, nb_jobs);
 
     if (curves->is_16bit) {
         for (y = slice_start; y < slice_end; y++) {
@@ -802,19 +805,19 @@ static int filter_slice_planar(AVFilterContext *ctx, void *arg, int jobnr, int n
     const uint8_t g = curves->rgba_map[G];
     const uint8_t b = curves->rgba_map[B];
     const uint8_t a = curves->rgba_map[A];
-    const int slice_start = (in->height *  jobnr   ) / nb_jobs;
-    const int slice_end   = (in->height * (jobnr+1)) / nb_jobs;
+    const int slice_start = ff_slice_pos(in->height, jobnr, nb_jobs);
+    const int slice_end   = ff_slice_pos(in->height, jobnr + 1, nb_jobs);
 
     if (curves->is_16bit) {
         for (y = slice_start; y < slice_end; y++) {
             uint16_t       *dstrp = (      uint16_t *)(out->data[r] + y * out->linesize[r]);
             uint16_t       *dstgp = (      uint16_t *)(out->data[g] + y * out->linesize[g]);
             uint16_t       *dstbp = (      uint16_t *)(out->data[b] + y * out->linesize[b]);
-            uint16_t       *dstap = (      uint16_t *)(out->data[a] + y * out->linesize[a]);
+            uint16_t       *dstap = (      uint16_t *)(step == 4 ? out->data[a] + y * out->linesize[a] : NULL);
             const uint16_t *srcrp = (const uint16_t *)(in ->data[r] + y *  in->linesize[r]);
             const uint16_t *srcgp = (const uint16_t *)(in ->data[g] + y *  in->linesize[g]);
             const uint16_t *srcbp = (const uint16_t *)(in ->data[b] + y *  in->linesize[b]);
-            const uint16_t *srcap = (const uint16_t *)(in ->data[a] + y *  in->linesize[a]);
+            const uint16_t *srcap = (const uint16_t *)(step == 4 ? in ->data[a] + y *  in->linesize[a] : NULL);
 
             for (x = 0; x < in->width; x++) {
                 dstrp[x] = curves->graph[R][srcrp[x]];
@@ -828,11 +831,13 @@ static int filter_slice_planar(AVFilterContext *ctx, void *arg, int jobnr, int n
         uint8_t       *dstr = out->data[r] + slice_start * out->linesize[r];
         uint8_t       *dstg = out->data[g] + slice_start * out->linesize[g];
         uint8_t       *dstb = out->data[b] + slice_start * out->linesize[b];
-        uint8_t       *dsta = out->data[a] + slice_start * out->linesize[a];
+        uint8_t       *dsta =    step == 4 ? out->data[a]
+                                           + slice_start * out->linesize[a] : NULL;
         const uint8_t *srcr =  in->data[r] + slice_start *  in->linesize[r];
         const uint8_t *srcg =  in->data[g] + slice_start *  in->linesize[g];
         const uint8_t *srcb =  in->data[b] + slice_start *  in->linesize[b];
-        const uint8_t *srca =  in->data[a] + slice_start *  in->linesize[a];
+        const uint8_t *srca =    step == 4 ?  in->data[a]
+                                           + slice_start *  in->linesize[a] : NULL;
 
         for (y = slice_start; y < slice_end; y++) {
             for (x = 0; x < in->width; x++) {
@@ -845,11 +850,13 @@ static int filter_slice_planar(AVFilterContext *ctx, void *arg, int jobnr, int n
             dstr += out->linesize[r];
             dstg += out->linesize[g];
             dstb += out->linesize[b];
-            dsta += out->linesize[a];
             srcr += in ->linesize[r];
             srcg += in ->linesize[g];
             srcb += in ->linesize[b];
-            srca += in ->linesize[a];
+            if (step == 4) {
+                dsta += out->linesize[a];
+                srca += in ->linesize[a];
+            }
         }
     }
     return 0;
@@ -905,7 +912,7 @@ static int config_input(AVFilterLink *inlink)
     }
 
     if (curves->plot_filename && !curves->saved_plot) {
-        dump_curves(curves->plot_filename, curves->graph, comp_points, curves->lut_size);
+        dump_curves(curves->plot_filename, curves->graph, comp_points, curves->lut_size, ctx);
         curves->saved_plot = 1;
     }
 
@@ -1005,9 +1012,11 @@ static const AVFilterPad curves_inputs[] = {
     },
 };
 
-const AVFilter ff_vf_curves = {
-    .name          = "curves",
-    .description   = NULL_IF_CONFIG_SMALL("Adjust components curves."),
+const FFFilter ff_vf_curves = {
+    .p.name        = "curves",
+    .p.description = NULL_IF_CONFIG_SMALL("Adjust components curves."),
+    .p.priv_class  = &curves_class,
+    .p.flags       = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .priv_size     = sizeof(CurvesContext),
     .init          = curves_init,
     .uninit        = curves_uninit,
@@ -1026,7 +1035,5 @@ const AVFilter ff_vf_curves = {
                    AV_PIX_FMT_GBRP12, AV_PIX_FMT_GBRAP12,
                    AV_PIX_FMT_GBRP14,
                    AV_PIX_FMT_GBRP16, AV_PIX_FMT_GBRAP16),
-    .priv_class    = &curves_class,
-    .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC | AVFILTER_FLAG_SLICE_THREADS,
     .process_command = process_command,
 };

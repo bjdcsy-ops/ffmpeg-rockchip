@@ -39,6 +39,7 @@
 #include <zlib.h>
 
 #include "libavutil/intreadwrite.h"
+#include "libavutil/mem.h"
 #include "avcodec.h"
 #include "bytestream.h"
 #include "codec_internal.h"
@@ -313,6 +314,9 @@ static int flashsv_decode_frame(AVCodecContext *avctx, AVFrame *rframe,
     v_blocks = s->image_height / s->block_height;
     v_part   = s->image_height % s->block_height;
 
+    if (h_blocks * v_blocks * 16 > get_bits_left(&gb))
+        return AVERROR_INVALIDDATA;
+
     /* the block size could change between frames, make sure the buffer
      * is large enough, if not, get a larger one */
     if (s->block_size < s->block_width * s->block_height) {
@@ -511,7 +515,6 @@ const FFCodec ff_flashsv_decoder = {
     FF_CODEC_DECODE_CB(flashsv_decode_frame),
     .p.capabilities = AV_CODEC_CAP_DR1,
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
-    .p.pix_fmts     = (const enum AVPixelFormat[]) { AV_PIX_FMT_BGR24, AV_PIX_FMT_NONE },
 };
 #endif /* CONFIG_FLASHSV_DECODER */
 
@@ -579,6 +582,5 @@ const FFCodec ff_flashsv2_decoder = {
     FF_CODEC_DECODE_CB(flashsv_decode_frame),
     .p.capabilities = AV_CODEC_CAP_DR1,
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
-    .p.pix_fmts     = (const enum AVPixelFormat[]) { AV_PIX_FMT_BGR24, AV_PIX_FMT_NONE },
 };
 #endif /* CONFIG_FLASHSV2_DECODER */

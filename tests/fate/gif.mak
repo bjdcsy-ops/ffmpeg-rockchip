@@ -11,9 +11,9 @@ FATE_GIF += fate-gif-gray
 fate-gif-gray: CMD = framecrc -i $(TARGET_SAMPLES)/gif/Newtons_cradle_animation_book_2.gif -pix_fmt bgra -vf scale
 
 FATE_GIF += fate-gif-deal
-fate-gif-deal: CMD = framecrc -i $(TARGET_SAMPLES)/gif/deal.gif -vsync cfr -pix_fmt bgra -auto_conversion_filters
+fate-gif-deal: CMD = framecrc -i $(TARGET_SAMPLES)/gif/deal.gif -fps_mode cfr -pix_fmt bgra -auto_conversion_filters
 
-FATE_GIF-$(call FRAMECRC, GIF, GIF, SCALE_FILTER) += $(FATE_GIF)
+FATE_GIF-$(call FRAMECRC, GIF, GIF, GIF_PARSER SCALE_FILTER) += $(FATE_GIF)
 
 fate-gifenc%: PIXFMT = $(word 3, $(subst -, ,$(@)))
 fate-gifenc%: SRC = $(TARGET_SAMPLES)/gif/tc217.gif
