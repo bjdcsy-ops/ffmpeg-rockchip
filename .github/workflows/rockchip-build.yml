@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - master
+      - "6.1"
+      - "8.1"
   workflow_dispatch:
 
 permissions:
@@ -20,8 +22,37 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  validate-master:
+    name: Validate master build files
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-22.04-arm
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout FFmpeg
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+
+      - name: Prepare Ubuntu 22.04 ARM64 build image
+        run: ./build-rockchip.sh image
+
+      - name: Validate build files
+        run: |
+          source build/rockchip/config.sh
+          docker run \
+            --rm \
+            --platform linux/arm64 \
+            --user "$(id -u):$(id -g)" \
+            --workdir /workspace \
+            --volume "$GITHUB_WORKSPACE:/workspace" \
+            --entrypoint /bin/bash \
+            "$ROCKCHIP_BUILD_IMAGE" \
+            /workspace/build/rockchip/tools/check.sh
+
   build:
     name: ${{ matrix.target }} build
+    if: github.ref == 'refs/heads/6.1' || github.ref == 'refs/heads/8.1'
     runs-on: ubuntu-22.04-arm
     timeout-minutes: 150
 
@@ -137,7 +168,6 @@ jobs:
           key: ${{ steps.ccache_cache.outputs.cache-primary-key }}
 
       - name: Attest FFmpeg package
-        if: github.ref == 'refs/heads/master'
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
           subject-path: artifact/${{ steps.target.outputs.artifact }}.tar.gz
@@ -145,7 +175,7 @@ jobs:
       - name: Upload FFmpeg package
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: ${{ steps.target.outputs.artifact }}
+          name: ${{ github.ref_name }}-${{ steps.target.outputs.artifact }}
           path: |
             artifact/${{ steps.target.outputs.artifact }}.tar.gz
             artifact/${{ steps.target.outputs.artifact }}.tar.gz.sha256
@@ -155,6 +185,6 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: ffmpeg-config-log-${{ matrix.target }}
+          name: ffmpeg-config-log-${{ github.ref_name }}-${{ matrix.target }}
           path: .build/rockchip/${{ matrix.target }}/ffmpeg/ffbuild/config.log
           if-no-files-found: ignore
