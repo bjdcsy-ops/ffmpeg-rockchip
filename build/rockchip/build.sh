@@ -202,9 +202,9 @@ configure_args=(
   --enable-gpl
   --enable-version3
   --enable-lto=auto
-  "--cc=ccache gcc"
-  "--cxx=ccache g++"
-  "--host-cc=ccache gcc"
+  "--cc=$SCRIPT_DIR/compiler.sh gcc"
+  "--cxx=$SCRIPT_DIR/compiler.sh g++"
+  "--host-cc=$SCRIPT_DIR/compiler.sh gcc"
   --enable-libdrm
   --enable-rkmpp
   --enable-rkrga
