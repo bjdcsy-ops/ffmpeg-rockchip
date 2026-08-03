@@ -63,6 +63,9 @@ typedef struct RKMPPDecContext {
     int            info_change;
     int            got_frame;
     int            use_rfbc;
+    uint8_t       *extradata;
+    size_t         extradata_size;
+    int            extradata_sent;
 
     int            deint;
     int            afbc;
