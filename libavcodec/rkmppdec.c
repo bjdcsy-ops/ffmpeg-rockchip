@@ -28,6 +28,7 @@
 #include "config.h"
 #include "config_components.h"
 
+#include "bsf.h"
 #include "rkmppdec.h"
 
 #include <fcntl.h>
@@ -142,6 +143,129 @@ static void read_soc_name(AVCodecContext *avctx, char *name, int size)
     }
 }
 
+static int rkmpp_uses_extradata(const AVCodecContext *avctx)
+{
+    return avctx->codec_id == AV_CODEC_ID_H264 ||
+           avctx->codec_id == AV_CODEC_ID_HEVC;
+}
+
+static int rkmpp_replace_extradata(AVCodecContext *avctx,
+                                   const uint8_t *data, size_t size)
+{
+    RKMPPDecContext *r = avctx->priv_data;
+    uint8_t *extradata = NULL;
+
+    if (!data)
+        size = 0;
+
+    if (data && size) {
+        if (size > SIZE_MAX - AV_INPUT_BUFFER_PADDING_SIZE)
+            return AVERROR(ERANGE);
+
+        extradata = av_mallocz(size + AV_INPUT_BUFFER_PADDING_SIZE);
+        if (!extradata)
+            return AVERROR(ENOMEM);
+        memcpy(extradata, data, size);
+    }
+
+    av_freep(&r->extradata);
+    r->extradata = extradata;
+    r->extradata_size = size;
+    r->extradata_sent = 0;
+    return 0;
+}
+
+static int rkmpp_update_extradata(AVCodecContext *avctx,
+                                  const uint8_t *data, size_t size)
+{
+    /* Keep configuration and coded packets in the same Annex B form. */
+    const char *bsf_name = avctx->codec_id == AV_CODEC_ID_H264 ?
+                           "h264_mp4toannexb" : "hevc_mp4toannexb";
+    const AVBitStreamFilter *filter = av_bsf_get_by_name(bsf_name);
+    AVBSFContext *bsf = NULL;
+    uint8_t *extradata = NULL;
+    int ret;
+
+    if (!data || !size)
+        return rkmpp_replace_extradata(avctx, NULL, 0);
+
+    if (!filter)
+        return AVERROR_BSF_NOT_FOUND;
+
+    ret = av_bsf_alloc(filter, &bsf);
+    if (ret < 0)
+        return ret;
+
+    ret = avcodec_parameters_from_context(bsf->par_in, avctx);
+    if (ret < 0)
+        goto fail;
+
+    if (size > INT_MAX || size > SIZE_MAX - AV_INPUT_BUFFER_PADDING_SIZE) {
+        ret = AVERROR(ERANGE);
+        goto fail;
+    }
+
+    extradata = av_mallocz(size + AV_INPUT_BUFFER_PADDING_SIZE);
+    if (!extradata) {
+        ret = AVERROR(ENOMEM);
+        goto fail;
+    }
+    memcpy(extradata, data, size);
+
+    av_freep(&bsf->par_in->extradata);
+    bsf->par_in->extradata = extradata;
+    bsf->par_in->extradata_size = (int)size;
+    extradata = NULL;
+
+    ret = av_bsf_init(bsf);
+    if (ret < 0)
+        goto fail;
+
+    ret = rkmpp_replace_extradata(avctx, bsf->par_out->extradata,
+                                  bsf->par_out->extradata_size);
+
+fail:
+    av_free(extradata);
+    av_bsf_free(&bsf);
+    return ret;
+}
+
+static int rkmpp_send_extradata(AVCodecContext *avctx,
+                                const uint8_t *data, size_t size)
+{
+    RKMPPDecContext *r = avctx->priv_data;
+    MppPacket mpp_pkt = NULL;
+    int ret;
+
+    if (!data || !size) {
+        r->extradata_sent = 1;
+        return 0;
+    }
+
+    if ((ret = mpp_packet_init(&mpp_pkt, (void *)data, size)) != MPP_OK) {
+        av_log(avctx, AV_LOG_ERROR, "Failed to init extradata packet: %d\n", ret);
+        return AVERROR_EXTERNAL;
+    }
+
+    if ((ret = mpp_packet_set_extra_data(mpp_pkt)) != MPP_OK) {
+        av_log(avctx, AV_LOG_ERROR, "Failed to mark extradata packet: %d\n", ret);
+        mpp_packet_deinit(&mpp_pkt);
+        return AVERROR_EXTERNAL;
+    }
+
+    ret = r->mapi->decode_put_packet(r->mctx, mpp_pkt);
+    mpp_packet_deinit(&mpp_pkt);
+    if (ret != MPP_OK) {
+        av_log(avctx, AV_LOG_TRACE,
+               "Decoder rejected extradata packet: %d\n", ret);
+        return AVERROR(EAGAIN);
+    }
+
+    r->extradata_sent = 1;
+    av_log(avctx, AV_LOG_DEBUG, "Wrote %zu bytes of extradata to decoder\n", size);
+    return 0;
+}
+
 static av_cold int rkmpp_decode_close(AVCodecContext *avctx)
 {
     RKMPPDecContext *r = avctx->priv_data;
@@ -152,6 +276,9 @@ static av_cold int rkmpp_decode_close(AVCodecContext *avctx)
     r->info_change = 0;
     r->got_frame = 0;
     r->use_rfbc = 0;
+    r->extradata_sent = 0;
+    av_freep(&r->extradata);
+    r->extradata_size = 0;
 
     if (r->mapi) {
         r->mapi->reset(r->mctx);
@@ -360,6 +487,21 @@ static av_cold int rkmpp_decode_init(AVCodecContext *avctx)
             goto fail;
         }
         av_log(avctx, AV_LOG_VERBOSE, "Created a RKMPP hardware device\n");
+    }
+
+    if (rkmpp_uses_extradata(avctx)) {
+        /* The decoder BSF has already normalized container extradata. */
+        const AVCodecParameters *par = avctx->internal->bsf->par_out;
+
+        ret = rkmpp_replace_extradata(avctx, par->extradata,
+                                      par->extradata_size);
+        if (ret < 0)
+            goto fail;
+
+        ret = rkmpp_send_extradata(avctx, r->extradata,
+                                   r->extradata_size);
+        if (ret < 0 && ret != AVERROR(EAGAIN))
+            goto fail;
     }
 
     return 0;
@@ -1058,6 +1200,13 @@ static int rkmpp_send_packet(AVCodecContext *avctx, AVPacket *pkt)
     if (r->draining)
         return AVERROR(EOF);
 
+    if (rkmpp_uses_extradata(avctx) && !r->extradata_sent) {
+        ret = rkmpp_send_extradata(avctx, r->extradata,
+                                   r->extradata_size);
+        if (ret < 0)
+            return ret;
+    }
+
     /* do not skip non-key pkt until got any frame */
     if (r->got_frame &&
         avctx->skip_frame == AVDISCARD_NONKEY &&
@@ -1184,6 +1333,22 @@ static int rkmpp_decode_receive_frame(AVCodecContext *avctx, AVFrame *frame)
                 av_log(avctx, AV_LOG_ERROR, "Decoder failed to get packet: %d\n", ret);
                 goto exit;
             }
+
+            if (rkmpp_uses_extradata(avctx)) {
+                size_t extradata_size = 0;
+                const uint8_t *extradata = av_packet_get_side_data(
+                    pkt, AV_PKT_DATA_NEW_EXTRADATA, &extradata_size);
+
+                if (extradata) {
+                    ret = rkmpp_update_extradata(avctx, extradata,
+                                                 extradata_size);
+                    if (ret < 0) {
+                        av_log(avctx, AV_LOG_ERROR,
+                               "Failed to update extradata: %d\n", ret);
+                        goto exit;
+                    }
+                }
+            }
         } else {
             /* send pending data to decoder */
             ret = rkmpp_send_packet(avctx, pkt);
@@ -1221,6 +1386,8 @@ static av_cold void rkmpp_decode_flush(AVCodecContext *avctx)
         r->draining = 0;
         r->info_change = 0;
         r->got_frame = 0;
+        /* MPP reset drops codec configuration; resend before coded data. */
+        r->extradata_sent = 0;
 
         av_packet_unref(&r->last_pkt);
     } else
