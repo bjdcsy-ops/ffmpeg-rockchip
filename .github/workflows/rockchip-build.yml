@@ -127,8 +127,11 @@ jobs:
         run: ./build-rockchip.sh "${{ matrix.target }}"
 
       - name: Archive FFmpeg package
+        id: archive
         run: |
           artifact="${{ steps.target.outputs.artifact }}"
+          ref_name="${GITHUB_REF_NAME//\//-}"
+          archive="$ref_name-$artifact.tar.gz"
           source_date_epoch=$(
             sed -n 's/^source_date_epoch=//p' \
               "artifact/$artifact/BUILDINFO.txt"
@@ -144,14 +147,10 @@ jobs:
             --numeric-owner \
             -C artifact \
             -cf - \
-            "$artifact" \
-            "$artifact.mtree" |
-            gzip -n >"artifact/$artifact.tar.gz"
+            "$artifact" |
+            gzip -n >"artifact/$archive"
 
-          (
-            cd artifact
-            sha256sum "$artifact.tar.gz" >"$artifact.tar.gz.sha256"
-          )
+          printf 'path=artifact/%s\n' "$archive" >>"$GITHUB_OUTPUT"
 
       - name: Save Rockchip dependency cache
         if: steps.rockchip_deps_cache.outputs.cache-hit != 'true'
@@ -170,20 +169,18 @@ jobs:
       - name: Attest FFmpeg package
         uses: actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d # v4
         with:
-          subject-path: artifact/${{ steps.target.outputs.artifact }}.tar.gz
+          subject-path: ${{ steps.archive.outputs.path }}
 
       - name: Upload FFmpeg package
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: ${{ github.ref_name }}-${{ steps.target.outputs.artifact }}
-          path: |
-            artifact/${{ steps.target.outputs.artifact }}.tar.gz
-            artifact/${{ steps.target.outputs.artifact }}.tar.gz.sha256
+          path: ${{ steps.archive.outputs.path }}
+          archive: false
           if-no-files-found: error
 
       - name: Upload configure log on failure
         if: failure()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ffmpeg-config-log-${{ github.ref_name }}-${{ matrix.target }}
           path: .build/rockchip/${{ matrix.target }}/ffmpeg/ffbuild/config.log

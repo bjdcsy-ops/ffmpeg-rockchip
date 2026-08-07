@@ -138,7 +138,7 @@ BUILD_ROOT="$SOURCE_DIR/.build/rockchip/$target"
 DEPS_PREFIX="$SOURCE_DIR/.rockchip-cache/deps/$target/$deps_cache_key"
 INSTALL_PREFIX="$SOURCE_DIR/dist/$target"
 PACKAGE_DIR="$SOURCE_DIR/artifact/$ROCKCHIP_ARTIFACT"
-PACKAGE_MANIFEST="$PACKAGE_DIR.mtree"
+PACKAGE_MANIFEST="$PACKAGE_DIR/MANIFEST.mtree"
 FFMPEG_BUILD_DIR="$BUILD_ROOT/ffmpeg"
 CCACHE_DIR="$SOURCE_DIR/.rockchip-cache/ccache/$target/$ROCKCHIP_CCACHE_CACHE_VERSION"
 
@@ -201,7 +201,8 @@ printf 'Dependency versions: MPP=%s RGA=%s DRM=%s\n' \
   "$mpp_version" "$rga_version" "$drm_version"
 
 rm -rf -- "$INSTALL_PREFIX" "$PACKAGE_DIR"
-rm -f -- "$PACKAGE_MANIFEST"
+# Remove manifests produced by the former sibling-manifest layout.
+rm -f -- "$PACKAGE_DIR.mtree"
 mkdir -p "$INSTALL_PREFIX"
 
 build_ffmpeg

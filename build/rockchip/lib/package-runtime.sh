@@ -291,7 +291,7 @@ Run ./ffmpeg from this directory so the embedded runtime path resolves
 the bundled lib/ directory.
 
 Artifact manifest:
-  ../$(basename "$PACKAGE_MANIFEST")
+  ./$(basename "$PACKAGE_MANIFEST")
 
 Smoke checks:
   ./ffmpeg -decoders | grep rkmpp
@@ -307,6 +307,7 @@ rockchip_generate_artifact_manifest() {
     printf '# ffmpeg-rockchip artifact manifest\n'
     printf '# manifest_format=mtree-v1\n'
     printf '# keywords=type,mode,sha256digest,link\n'
+    printf '# MANIFEST.mtree is excluded because a manifest cannot hash itself.\n'
     # Ubuntu emits the sha256 alias; macOS accepts only sha256digest.
     mtree \
       -c \
