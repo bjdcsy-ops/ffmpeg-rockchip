@@ -33,9 +33,8 @@ ARM64。宿主机只负责启动容器，不会直接编译 FFmpeg。以下命�
 ./build-rockchip.sh clean rk3576
 ```
 
-本地交付物位于 `artifact/ffmpeg-rockchip-<target>-ubuntu22-arm64/`，同级
-还会生成对应的 `.mtree` manifest。`.tar.gz` 只由 GitHub Actions 在上传前
-生成。
+本地交付物位于 `artifact/ffmpeg-rockchip-<target>-ubuntu22-arm64/`，内部
+包含 `MANIFEST.mtree`。`.tar.gz` 只由 GitHub Actions 在上传前生成。
 
 ## 构建如何工作
 
@@ -160,7 +159,7 @@ configure 参数、受控编译环境、编译器包装器、依赖缓存键、�
 | `.build/rockchip/` | FFmpeg、MPP 和 RGA 的中间构建目录 |
 | `.rockchip-cache/` | 已安装的 Rockchip 依赖和 ccache |
 | `dist/` | FFmpeg 的临时安装目录；可执行文件从自身 `bin/lib/` 加载运行库 |
-| `artifact/` | 最终运行时目录及其同级 `.mtree` manifest |
+| `artifact/` | 最终运行时目录；目录内包含 `MANIFEST.mtree` |
 
 最终交付物包含 `ffmpeg`、`ffprobe`、MPP/RGA 运行库以及版本和构建信息。
 头文件、静态库、pkg-config 文件等开发内容不会进入交付目录。
@@ -179,9 +178,10 @@ install 的运行库位于 `dist/<target>/bin/lib/`，最终交付物的运行�
 版本、源码状态、依赖提交、构建器指纹、FFmpeg 构建配置 stamp、目标参数和
 glibc 版本；`package_script_sha256` 标识生成当前运行时布局的打包脚本。
 
-同级 `.mtree` manifest 使用标准 mtree 格式，记录交付目录的完整文件集合、
-类型、权限、普通文件 SHA-256 和符号链接目标。manifest 位于交付目录外，
-因此可以覆盖目录中的每一个文件而不产生自哈希问题。
+`MANIFEST.mtree` 使用标准 mtree 格式，记录交付目录中除 manifest 自身之外的
+完整文件集合、类型、权限、普通文件 SHA-256 和符号链接目标。manifest 无法
+对自身进行哈希；Actions 显示的 Artifact Digest 和构建来源证明覆盖完整的
+`.tar.gz`，包括其中的 `MANIFEST.mtree`。
 
 验证一个交付目录：
 
@@ -218,11 +218,12 @@ Actions 与本地构建都调用根目录的 `build-rockchip.sh`。构建参数�
 编译和运行时打包继续放在脚本中，工作流只处理矩阵调度、缓存传输、静态
 检查和发布步骤，从而避免本地与 CI 维护两套构建逻辑。
 
-本地构建不会生成最终交付物归档。`8.1` 和 `6.1` 的 Actions 会把运行时
-目录和同级 `.mtree` manifest 一起写入具有固定条目顺序、时间和所有者的
-`.tar.gz`，同时上传 SHA-256 校验文件并生成构建来源证明。Actions 产物名称
-包含版本分支和芯片目标。工作流引用的 GitHub Actions 固定到完整提交 SHA，
-版本号保留在行尾注释中。
+本地构建不会生成最终交付物归档。`8.1` 和 `6.1` 的 Actions 会把包含
+`MANIFEST.mtree` 的单一运行时目录写入具有固定条目顺序、时间和所有者的
+`.tar.gz`，生成构建来源证明，并使用 Actions 的直接文件上传能力发布，不再
+生成额外的 `.sha256` 文件或 ZIP 包装层。产物文件名包含版本分支和芯片目标；
+Actions 页面显示的 Artifact Digest 可用于核对下载文件。工作流引用的
+GitHub Actions 固定到完整提交 SHA，版本号保留在行尾注释中。
 
 构建镜像的 Ubuntu 基础镜像使用 digest，缓存键还会记录实际工具链指纹。
 Ubuntu apt 仓库目前没有固定到历史快照，因此跨日期重建仍应通过 SHA-256

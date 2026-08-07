@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Verifies one artifact against its sibling mtree manifest, or compares two.
+# Verifies one artifact against its internal manifest, or compares two.
 
 set -euo pipefail
 
@@ -39,22 +39,30 @@ resolve_artifact_dir() {
 
 verify_artifact() {
   local artifact_dir=$1
-  local manifest="$artifact_dir.mtree"
   local mtree_bin=$2
+  local exclude_file=
+  local manifest
+  local -a mtree_args
   local mtree_output
   local mtree_status
 
-  if [ ! -f "$manifest" ]; then
-    printf 'Artifact manifest not found: %s\n' "$manifest" >&2
-    return 1
+  manifest=$(resolve_artifact_manifest "$artifact_dir")
+  mtree_args=(-P -p "$artifact_dir" -f "$manifest")
+  if [ "$manifest" = "$artifact_dir/MANIFEST.mtree" ]; then
+    exclude_file=$(mktemp "${TMPDIR:-/tmp}/ffmpeg-rockchip-mtree.XXXXXX")
+    printf 'MANIFEST.mtree\n' >"$exclude_file"
+    mtree_args+=(-X "$exclude_file")
   fi
 
   if mtree_output=$(
-    "$mtree_bin" -P -p "$artifact_dir" -f "$manifest" 2>&1
+    "$mtree_bin" "${mtree_args[@]}" 2>&1
   ); then
     mtree_status=0
   else
     mtree_status=$?
+  fi
+  if [ -n "$exclude_file" ]; then
+    rm -f -- "$exclude_file"
   fi
 
   if [ "$mtree_status" -ne 0 ] || [ -n "$mtree_output" ]; then
@@ -66,6 +74,21 @@ verify_artifact() {
   fi
 
   printf 'Verified artifact manifest: %s\n' "$manifest"
+}
+
+resolve_artifact_manifest() {
+  local artifact_dir=$1
+  local internal_manifest="$artifact_dir/MANIFEST.mtree"
+  local legacy_manifest="$artifact_dir.mtree"
+
+  if [ -f "$internal_manifest" ]; then
+    printf '%s\n' "$internal_manifest"
+  elif [ -f "$legacy_manifest" ]; then
+    printf '%s\n' "$legacy_manifest"
+  else
+    printf 'Artifact manifest not found: %s\n' "$internal_manifest" >&2
+    return 1
+  fi
 }
 
 mtree_bin=$(resolve_mtree)
@@ -88,8 +111,8 @@ fi
 
 left_artifact=$(resolve_artifact_dir "$1")
 right_artifact=$(resolve_artifact_dir "$2")
-left_manifest="$left_artifact.mtree"
-right_manifest="$right_artifact.mtree"
+left_manifest=$(resolve_artifact_manifest "$left_artifact")
+right_manifest=$(resolve_artifact_manifest "$right_artifact")
 
 verify_artifact "$left_artifact" "$mtree_bin"
 verify_artifact "$right_artifact" "$mtree_bin"

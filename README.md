@@ -38,11 +38,11 @@ The runtime and its manifest are written to:
 
 ```text
 artifact/ffmpeg-rockchip-<target>-ubuntu22-arm64/
-artifact/ffmpeg-rockchip-<target>-ubuntu22-arm64.mtree
+└── MANIFEST.mtree
 ```
 
 Local builds leave this directory unpacked; GitHub Actions additionally creates
-the `.tar.gz` archive used for upload.
+and directly uploads a branch-qualified `.tar.gz` archive.
 
 See the [Rockchip FFmpeg build and maintenance guide](build/rockchip/README.md)
 for the file map, cache behavior, dependency updates, verification, and

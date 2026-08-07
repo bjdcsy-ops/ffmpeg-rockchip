@@ -333,8 +333,37 @@ EOF
     "unexpected number of mocked make calls"
 )
 
+test_internal_artifact_manifest() (
+  local case_root="$TEST_ROOT/artifact-manifest"
+  local manifest_tmp="$case_root/MANIFEST.tmp"
+  local package_dir="$case_root/package"
+
+  mkdir -p "$package_dir/lib"
+  printf 'binary\n' >"$package_dir/ffmpeg"
+  printf 'library\n' >"$package_dir/lib/libexample.so"
+  chmod 0755 "$package_dir/ffmpeg" "$package_dir/lib/libexample.so"
+
+  source "$ROCKCHIP_BUILD_DIR/lib/package-runtime.sh"
+  PACKAGE_DIR=$package_dir \
+    rockchip_generate_artifact_manifest "$manifest_tmp"
+  mv -- "$manifest_tmp" "$package_dir/MANIFEST.mtree"
+
+  "$TOOLS_DIR/compare-artifacts.sh" --verify "$package_dir"
+  if grep -Fq 'MANIFEST.mtree' \
+    <(grep -v '^#' "$package_dir/MANIFEST.mtree"); then
+    fail "internal manifest unexpectedly includes itself"
+  fi
+
+  printf 'changed\n' >>"$package_dir/ffmpeg"
+  if "$TOOLS_DIR/compare-artifacts.sh" --verify "$package_dir" \
+    >"$case_root/invalid.log" 2>&1; then
+    fail "artifact verification accepted modified payload"
+  fi
+)
+
 test_dependency_input_hash_boundaries
 test_rga_environment_isolation
 test_ffmpeg_stamp_transitions
+test_internal_artifact_manifest
 
 printf 'Rockchip build state tests passed.\n'
