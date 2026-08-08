@@ -3,7 +3,6 @@ name: Build Rockchip FFmpeg
 on:
   push:
     branches:
-      - master
       - "6.1"
       - "8.1"
   workflow_dispatch:
@@ -22,37 +21,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  validate-master:
-    name: Validate master build files
-    if: github.ref == 'refs/heads/master'
-    runs-on: ubuntu-22.04-arm
-    timeout-minutes: 30
-
-    steps:
-      - name: Checkout FFmpeg
-        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          persist-credentials: false
-
-      - name: Prepare Ubuntu 22.04 ARM64 build image
-        run: ./build-rockchip.sh image
-
-      - name: Validate build files
-        run: |
-          source build/rockchip/config.sh
-          docker run \
-            --rm \
-            --platform linux/arm64 \
-            --user "$(id -u):$(id -g)" \
-            --workdir /workspace \
-            --volume "$GITHUB_WORKSPACE:/workspace" \
-            --entrypoint /bin/bash \
-            "$ROCKCHIP_BUILD_IMAGE" \
-            /workspace/build/rockchip/tools/check.sh
-
   build:
     name: ${{ matrix.target }} build
-    if: github.ref == 'refs/heads/6.1' || github.ref == 'refs/heads/8.1'
     runs-on: ubuntu-22.04-arm
     timeout-minutes: 150
 
