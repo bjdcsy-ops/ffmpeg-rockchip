@@ -89,7 +89,7 @@ FFmpeg 构建能力时通常从这里开始。
 | 文件 | 作用 |
 | --- | --- |
 | `build-rockchip.sh` | 开发者和 GitHub Actions 共用的构建入口 |
-| `.github/workflows/rockchip-build.yml` | `master` 构建、缓存、归档和产物发布 |
+| `.github/workflows/rockchip-build.yml` | `6.1`、`8.1` 构建、缓存、归档和产物发布 |
 
 升级 FFmpeg、Ubuntu 或目标 CPU 基线会同时影响兼容性、缓存和交付物，适合
 作为独立改动处理，并重新验证所有目标。
@@ -201,7 +201,7 @@ glibc 版本；`package_script_sha256` 标识生成当前运行时布局的打�
 
 | 分支 | FFmpeg 基线 | 用途 | 推送后的 Actions |
 | --- | --- | --- | --- |
-| `master` | 当前 8.1 | 主要开发与集成 | 构建文件静态检查 |
+| `master` | 当前 8.1 | 主要开发与集成 | 不自动运行，与 `8.1` 保持同指针 |
 | `8.1` | 8.1 | 当前版本交付，与 `master` 快进保持同指针 | 三平台完整构建、签名和上传 |
 | `6.1` | 6.1 | 兼容版本维护 | 三平台完整构建、签名和上传 |
 
@@ -210,9 +210,9 @@ glibc 版本；`package_script_sha256` 标识生成当前运行时布局的打�
 分支的独立构建。上游更新分别从 `upstream/8.1` 和 `upstream/6.1` 合并，
 不要在两个版本分支之间整体合并。
 
-工作流在推送到 `master`、`8.1` 或 `6.1` 时自动运行，也可以通过
-`workflow_dispatch` 手动启动。`master` 不生成交付物；`8.1` 和 `6.1`
-分别生成对应版本的完整产物。
+工作流只在推送到 `8.1` 或 `6.1` 时自动运行，也可以通过
+`workflow_dispatch` 手动启动。推送 `master` 只更新分支，不创建工作流
+运行；`8.1` 和 `6.1` 分别生成对应版本的完整产物。
 
 Actions 与本地构建都调用根目录的 `build-rockchip.sh`。构建参数、依赖
 编译和运行时打包继续放在脚本中，工作流只处理矩阵调度、缓存传输、静态
@@ -282,8 +282,8 @@ sudo apt-get install mtree-netbsd
 ```
 
 提交前还应确认 `git diff --check` 通过，`git status` 中没有构建输出或缓存。
-合并到 `master` 后，再检查 Actions 三个目标的归档、校验文件和构建来源
-证明。
+将 `8.1` 快进到 `master` 并推送后，再检查 Actions 三个目标的归档、校验
+文件和构建来源证明。
 
 ## 故障排查
 
