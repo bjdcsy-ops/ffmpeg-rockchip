@@ -70,6 +70,7 @@ typedef struct RTPMuxContext RTPMuxContext;
 #define FF_RTP_FLAG_SKIP_RTCP 4
 #define FF_RTP_FLAG_H264_MODE0 8
 #define FF_RTP_FLAG_SEND_BYE  16
+#define FF_RTP_FLAG_RTCP_FROM_PACKET 32
 
 #define FF_RTP_FLAG_OPTS(ctx, fieldname) \
     { "rtpflags", "RTP muxer flags", offsetof(ctx, fieldname), AV_OPT_TYPE_FLAGS, {.i64 = 0}, INT_MIN, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM, .unit = "rtpflags" }, \
@@ -77,7 +78,8 @@ typedef struct RTPMuxContext RTPMuxContext;
     { "rfc2190", "Use RFC 2190 packetization instead of RFC 4629 for H.263", 0, AV_OPT_TYPE_CONST, {.i64 = FF_RTP_FLAG_RFC2190}, INT_MIN, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM, .unit = "rtpflags" }, \
     { "skip_rtcp", "Don't send RTCP sender reports", 0, AV_OPT_TYPE_CONST, {.i64 = FF_RTP_FLAG_SKIP_RTCP}, INT_MIN, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM, .unit = "rtpflags" }, \
     { "h264_mode0", "Use mode 0 for H.264 in RTP", 0, AV_OPT_TYPE_CONST, {.i64 = FF_RTP_FLAG_H264_MODE0}, INT_MIN, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM, .unit = "rtpflags" }, \
-    { "send_bye", "Send RTCP BYE packets when finishing", 0, AV_OPT_TYPE_CONST, {.i64 = FF_RTP_FLAG_SEND_BYE}, INT_MIN, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM, .unit = "rtpflags" } \
+    { "send_bye", "Send RTCP BYE packets when finishing", 0, AV_OPT_TYPE_CONST, {.i64 = FF_RTP_FLAG_SEND_BYE}, INT_MIN, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM, .unit = "rtpflags" }, \
+    { "rtcp_from_packet", "Use the current packet timestamp in RTCP sender reports", 0, AV_OPT_TYPE_CONST, {.i64 = FF_RTP_FLAG_RTCP_FROM_PACKET}, INT_MIN, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM, .unit = "rtpflags" } \
 
 void ff_rtp_send_data(AVFormatContext *s1, const uint8_t *buf1, int len, int m);
 
