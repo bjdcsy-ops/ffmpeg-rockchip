@@ -64,11 +64,15 @@ build_ffmpeg() {
     --enable-bsf=hevc_mp4toannexb
     --enable-decoder=h264_rkmpp
     --enable-decoder=hevc_rkmpp
+    --enable-decoder=aac
     --enable-decoder=pcm_mulaw
     --enable-encoder=h264_rkmpp
     --enable-encoder=hevc_rkmpp
+    --enable-encoder=aac
     --enable-encoder=pcm_mulaw
     --enable-filter=aresample
+    --enable-filter=asetpts
+    --enable-filter=setpts
     --enable-filter=hwdownload
     --enable-filter=hwmap
     --enable-filter=hwupload
@@ -218,9 +222,11 @@ build_ffmpeg() {
   )
 
   required_configs=(
+    CONFIG_AAC_DECODER
     CONFIG_H264_RKMPP_DECODER
     CONFIG_HEVC_RKMPP_DECODER
     CONFIG_PCM_MULAW_DECODER
+    CONFIG_AAC_ENCODER
     CONFIG_H264_RKMPP_ENCODER
     CONFIG_HEVC_RKMPP_ENCODER
     CONFIG_PCM_MULAW_ENCODER
@@ -251,6 +257,8 @@ build_ffmpeg() {
     CONFIG_RTP_PROTOCOL
     CONFIG_HTTP_PROTOCOL
     CONFIG_ARESAMPLE_FILTER
+    CONFIG_ASETPTS_FILTER
+    CONFIG_SETPTS_FILTER
     CONFIG_HWDOWNLOAD_FILTER
     CONFIG_HWMAP_FILTER
     CONFIG_HWUPLOAD_FILTER

@@ -149,6 +149,24 @@ rockchip_verify_component_list() {
   done
 }
 
+rockchip_verify_muxer_option() {
+  local binary=$1
+  local muxer=$2
+  local option=$3
+  local help_output
+
+  if ! help_output=$("$binary" -hide_banner -h "muxer=$muxer" 2>&1); then
+    printf 'Failed to query FFmpeg muxer options: muxer=%s\n' "$muxer" >&2
+    printf '%s\n' "$help_output" >&2
+    return 1
+  fi
+  if ! grep -Eq "^[[:space:]]+$option([[:space:]]|$)" <<<"$help_output"; then
+    printf 'Missing FFmpeg muxer option: muxer=%s name=%s\n' \
+      "$muxer" "$option" >&2
+    return 1
+  fi
+}
+
 rockchip_write_buildinfo() {
   local artifact_version=$1
   local ffmpeg_script_sha
@@ -399,25 +417,29 @@ package_rockchip_runtime() (
   rockchip_verify_binary_version "$PACKAGE_DIR/ffmpeg" ffmpeg
   rockchip_verify_binary_version "$PACKAGE_DIR/ffprobe" ffprobe
   rockchip_verify_component_list \
-    "$PACKAGE_DIR/ffmpeg" decoders -decoders h264_rkmpp hevc_rkmpp
+    "$PACKAGE_DIR/ffmpeg" decoders -decoders aac h264_rkmpp hevc_rkmpp
   rockchip_verify_component_list \
-    "$PACKAGE_DIR/ffmpeg" encoders -encoders h264_rkmpp hevc_rkmpp
+    "$PACKAGE_DIR/ffmpeg" encoders -encoders aac h264_rkmpp hevc_rkmpp
   rockchip_verify_component_list \
     "$PACKAGE_DIR/ffmpeg" demuxers -demuxers rtsp rtp sdp mpegts
   rockchip_verify_component_list \
     "$PACKAGE_DIR/ffmpeg" muxers -muxers rtsp rtp mpegts
+  rockchip_verify_muxer_option \
+    "$PACKAGE_DIR/ffmpeg" rtsp rtcp_from_packet
   rockchip_verify_component_list \
     "$PACKAGE_DIR/ffmpeg" \
     filters \
     -filters \
+    asetpts \
     hwdownload \
     hwmap \
     hwupload \
     overlay_rkrga \
     scale_rkrga \
+    setpts \
     vpp_rkrga
   printf '%s\n' \
-    'FFmpeg component check passed: decoders=2 encoders=2 demuxers=4 muxers=3 filters=6'
+    'FFmpeg component check passed: decoders=3 encoders=3 demuxers=4 muxers=3 filters=8 rtsp_options=1'
 
   manifest_tmp=$(mktemp "$BUILD_ROOT/.artifact-manifest.XXXXXX")
   trap 'rm -f -- "$manifest_tmp"' EXIT

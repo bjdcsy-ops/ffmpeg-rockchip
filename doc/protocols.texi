@@ -1245,6 +1245,10 @@ Don't send RTCP sender reports.
 Use mode 0 for H.264 in RTP.
 @item send_bye
 Send RTCP BYE packets when finishing.
+@item rtcp_from_packet
+Use the timestamp of the current media packet in RTCP sender reports. This is
+intended for low-delay real-time output where packet timestamps track the
+sender wallclock and avoids retaining an inaccurate startup-time mapping.
 @end table
 
 Default value is @samp{0}.
