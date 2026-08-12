@@ -531,8 +531,14 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
                 qp_min = FFMIN(r->qp_min >= 0 ? r->qp_min : 0, qp_max);
                 qp_max_i = r->qp_max_i >= 0 ? r->qp_max_i : 48;
                 qp_min_i = FFMIN(r->qp_min_i >= 0 ? r->qp_min_i : 0, qp_max_i);
-                qp_init = FFMIN3(r->qp_init >= 0 ? r->qp_init : 26, qp_max, qp_max_i);
-                mpp_enc_cfg_set_s32(cfg, "rc:qp_ip", 2);
+                qp_init = r->qp_init >= 0 ? r->qp_init : 26;
+                if (qp_init < qp_min_i || qp_init > qp_max_i) {
+                    av_log(avctx, AV_LOG_ERROR,
+                           "Initial QP %d is outside the I-frame QP range [%d, %d]\n",
+                           qp_init, qp_min_i, qp_max_i);
+                    return AVERROR(EINVAL);
+                }
+                mpp_enc_cfg_set_s32(cfg, "rc:qp_ip", r->qp_ip);
                 break;
             default:
                 return AVERROR(EINVAL);
@@ -542,6 +548,8 @@ static int rkmpp_set_enc_cfg(AVCodecContext *avctx)
             mpp_enc_cfg_set_s32(cfg, "rc:qp_min", qp_min);
             mpp_enc_cfg_set_s32(cfg, "rc:qp_max_i",qp_max_i);
             mpp_enc_cfg_set_s32(cfg, "rc:qp_min_i", qp_min_i);
+            av_log(avctx, AV_LOG_VERBOSE, "QP I/P difference is set to %d\n",
+                   rc_mode == MPP_ENC_RC_MODE_FIXQP ? 0 : r->qp_ip);
 
             /* Intra Refresh / GDR */
             if (r->intra_refresh && r->refresh_num) {

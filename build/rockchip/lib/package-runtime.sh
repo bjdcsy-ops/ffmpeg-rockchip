@@ -167,6 +167,25 @@ rockchip_verify_muxer_option() {
   fi
 }
 
+rockchip_verify_encoder_option() {
+  local binary=$1
+  local encoder=$2
+  local option=$3
+  local help_output
+
+  if ! help_output=$("$binary" -hide_banner -h "encoder=$encoder" 2>&1); then
+    printf 'Failed to query FFmpeg encoder options: encoder=%s\n' \
+      "$encoder" >&2
+    printf '%s\n' "$help_output" >&2
+    return 1
+  fi
+  if ! grep -Eq "^[[:space:]]+-$option([[:space:]]|$)" <<<"$help_output"; then
+    printf 'Missing FFmpeg encoder option: encoder=%s name=%s\n' \
+      "$encoder" "$option" >&2
+    return 1
+  fi
+}
+
 rockchip_write_buildinfo() {
   local artifact_version=$1
   local ffmpeg_script_sha
@@ -426,6 +445,8 @@ package_rockchip_runtime() (
     "$PACKAGE_DIR/ffmpeg" muxers -muxers rtsp rtp mpegts
   rockchip_verify_muxer_option \
     "$PACKAGE_DIR/ffmpeg" rtsp rtcp_from_packet
+  rockchip_verify_encoder_option \
+    "$PACKAGE_DIR/ffmpeg" hevc_rkmpp qp_ip
   rockchip_verify_component_list \
     "$PACKAGE_DIR/ffmpeg" \
     filters \
@@ -439,7 +460,7 @@ package_rockchip_runtime() (
     setpts \
     vpp_rkrga
   printf '%s\n' \
-    'FFmpeg component check passed: decoders=3 encoders=3 demuxers=4 muxers=3 filters=8 rtsp_options=1'
+    'FFmpeg component check passed: decoders=3 encoders=3 demuxers=4 muxers=3 filters=8 rtsp_options=1 encoder_options=1'
 
   manifest_tmp=$(mktemp "$BUILD_ROOT/.artifact-manifest.XXXXXX")
   trap 'rm -f -- "$manifest_tmp"' EXIT
