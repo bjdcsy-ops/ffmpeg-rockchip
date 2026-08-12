@@ -76,6 +76,7 @@ typedef struct RKMPPEncContext {
     int                qp_min;
     int                qp_max_i;
     int                qp_min_i;
+    int                qp_ip;
     int                profile;
     int                tier;
     int                level;
@@ -117,6 +118,8 @@ static const AVRational mpp_tb = { 1, 1000000 };
             { .i64 = -1 }, -1, 51, VE, "qp_max_i" }, \
     { "qp_min_i", "Set the min QP value for I frame", OFFSET(qp_min_i), AV_OPT_TYPE_INT, \
             { .i64 = -1 }, -1, 51, VE, "qp_min_i" }, \
+    { "qp_ip", "Set the QP difference between I and P frames", OFFSET(qp_ip), AV_OPT_TYPE_INT, \
+            { .i64 = 2 }, 0, 8, VE, "qp_ip" }, \
     { "intra_refresh", "Use Intra Refresh instead of IDR frames", OFFSET(intra_refresh), AV_OPT_TYPE_BOOL, \
             { .i64 = 0 }, 0, 1, VE, "intra_refresh" }, \
     { "refresh_mode", "Set the Intra Refresh mode", OFFSET(refresh_mode), AV_OPT_TYPE_INT, \
