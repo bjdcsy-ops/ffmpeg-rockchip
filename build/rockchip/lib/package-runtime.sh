@@ -436,9 +436,36 @@ package_rockchip_runtime() (
   rockchip_verify_binary_version "$PACKAGE_DIR/ffmpeg" ffmpeg
   rockchip_verify_binary_version "$PACKAGE_DIR/ffprobe" ffprobe
   rockchip_verify_component_list \
-    "$PACKAGE_DIR/ffmpeg" decoders -decoders aac h264_rkmpp hevc_rkmpp
+    "$PACKAGE_DIR/ffmpeg" \
+    decoders \
+    -decoders \
+    aac \
+    aac_latm \
+    g722 \
+    g726 \
+    g726le \
+    g723_1 \
+    h264_rkmpp \
+    hevc_rkmpp \
+    mjpeg_rkmpp \
+    mp2 \
+    mp3 \
+    mpeg4_rkmpp \
+    opus \
+    pcm_alaw \
+    pcm_mulaw \
+    pcm_s16be \
+    pcm_s16le \
+    pcm_s24be \
+    pcm_s24le
   rockchip_verify_component_list \
-    "$PACKAGE_DIR/ffmpeg" encoders -encoders aac h264_rkmpp hevc_rkmpp
+    "$PACKAGE_DIR/ffmpeg" \
+    encoders \
+    -encoders \
+    aac \
+    h264_rkmpp \
+    hevc_rkmpp \
+    pcm_mulaw
   rockchip_verify_component_list \
     "$PACKAGE_DIR/ffmpeg" demuxers -demuxers rtsp rtp sdp mpegts
   rockchip_verify_component_list \
@@ -460,7 +487,7 @@ package_rockchip_runtime() (
     setpts \
     vpp_rkrga
   printf '%s\n' \
-    'FFmpeg component check passed: decoders=3 encoders=3 demuxers=4 muxers=3 filters=8 rtsp_options=1 encoder_options=1'
+    'FFmpeg component check passed: decoders=19 encoders=4 demuxers=4 muxers=3 filters=8 rtsp_options=1 encoder_options=1'
 
   manifest_tmp=$(mktemp "$BUILD_ROOT/.artifact-manifest.XXXXXX")
   trap 'rm -f -- "$manifest_tmp"' EXIT

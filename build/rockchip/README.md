@@ -6,8 +6,36 @@
 使用相同的 Dockerfile 与脚本，构建逻辑在这里维护，工作流负责 CI 调度、
 缓存和产物发布。
 
-当前基于 FFmpeg 6.1，支持 `rk3588`、`rk3576` 和 `rv1126b`，构建与交付
-仅面向 Linux ARM64。
+仓库维护 FFmpeg 8.1 和 6.1 两个版本分支，支持 `rk3588`、`rk3576` 和
+`rv1126b`，构建与交付仅面向 Linux ARM64。
+
+## RTSP IPC 输入兼容范围
+
+构建使用显式组件清单，不使用 `--enable-decoder=all`。这样可以控制交付物
+大小和不可信码流的解析面，同时由构建检查保证清单中的组件确实进入产物。
+
+| IPC 输入类型 | FFmpeg 组件 | RTP/RTSP 说明 |
+| --- | --- | --- |
+| H.264、H.265 | `h264_rkmpp`、`hevc_rkmpp` | MPP 硬件解码 |
+| MJPEG、MPEG-4 Part 2 | `mjpeg_rkmpp`、`mpeg4_rkmpp` | MPP 硬件解码；用于 MJPEG 子码流及旧款 IPC |
+| AAC | `aac`、`aac_latm` | RTSP 支持 `MPEG4-GENERIC` 及 RTP handler 可处理的 `MP4A-LATM` 子集（常见 `cpresent=0`）；其它容器取决于已启用 demuxer |
+| G.711 | `pcm_alaw`、`pcm_mulaw` | 支持 RTP `PCMA`、`PCMU` |
+| G.722、G.726 | `g722`、`g726`、`g726le` | configure 名称带 `adpcm_` 前缀；同时支持 G.726 的 RFC 与 AAL2 位序 |
+| Opus | `opus` | 支持动态 RTP `opus` |
+| MPEG 音频 | `mp2`、`mp3` | 支持标准 RTP `MPA`；厂商私有名称需要单独适配 |
+| PCM | `pcm_s16be/le`、`pcm_s24be/le` | 标准 RTP `L16`、`L24` 使用大端；小端用于厂商或容器输入 |
+| G.723.1 | `g723_1` | 支持标准 RTP 静态负载类型 4 |
+
+下列音频不能仅靠增加 decoder 就宣称 RTSP 可用：
+
+- G.722.1 对应 FFmpeg 的 `siren` decoder，但当前缺少 G.722.1 RTP 映射。
+- G.729 虽有 decoder，但当前 RTP 静态负载类型 18 未绑定可用 codec。
+- `MP2L2`、`PCM` 等厂商私有 SDP 名称可能不等同于标准 `MPA`、`L16`
+  或 `L24`。
+
+这些格式需要取得真实 IPC 的 SDP 和 RTP 样本，补充并验证 payload 映射、
+时钟频率、声道数及分帧方式后再加入兼容清单。交付验证只能证明组件已注册；
+新增输入格式仍需在目标板上完成 RTSP 到 AAC 的端到端测试。
 
 ## 快速开始
 
