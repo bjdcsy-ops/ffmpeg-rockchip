@@ -58,14 +58,33 @@ build_ffmpeg() {
     --enable-muxer=mp4
     --enable-muxer=mov
     --enable-muxer=null
+    --enable-parser=aac
+    --enable-parser=aac_latm
     --enable-parser=h264
     --enable-parser=hevc
+    --enable-parser=mpegaudio
+    --enable-parser=mpeg4video
     --enable-bsf=h264_mp4toannexb
     --enable-bsf=hevc_mp4toannexb
     --enable-decoder=h264_rkmpp
     --enable-decoder=hevc_rkmpp
+    --enable-decoder=mjpeg_rkmpp
+    --enable-decoder=mpeg4_rkmpp
     --enable-decoder=aac
+    --enable-decoder=aac_latm
+    --enable-decoder=adpcm_g722
+    --enable-decoder=adpcm_g726
+    --enable-decoder=adpcm_g726le
+    --enable-decoder=g723_1
+    --enable-decoder=mp2
+    --enable-decoder=mp3
+    --enable-decoder=opus
+    --enable-decoder=pcm_alaw
     --enable-decoder=pcm_mulaw
+    --enable-decoder=pcm_s16be
+    --enable-decoder=pcm_s16le
+    --enable-decoder=pcm_s24be
+    --enable-decoder=pcm_s24le
     --enable-encoder=h264_rkmpp
     --enable-encoder=hevc_rkmpp
     --enable-encoder=aac
@@ -223,9 +242,24 @@ build_ffmpeg() {
 
   required_configs=(
     CONFIG_AAC_DECODER
+    CONFIG_AAC_LATM_DECODER
+    CONFIG_ADPCM_G722_DECODER
+    CONFIG_ADPCM_G726_DECODER
+    CONFIG_ADPCM_G726LE_DECODER
+    CONFIG_G723_1_DECODER
     CONFIG_H264_RKMPP_DECODER
     CONFIG_HEVC_RKMPP_DECODER
+    CONFIG_MJPEG_RKMPP_DECODER
+    CONFIG_MP2_DECODER
+    CONFIG_MP3_DECODER
+    CONFIG_MPEG4_RKMPP_DECODER
+    CONFIG_OPUS_DECODER
+    CONFIG_PCM_ALAW_DECODER
     CONFIG_PCM_MULAW_DECODER
+    CONFIG_PCM_S16BE_DECODER
+    CONFIG_PCM_S16LE_DECODER
+    CONFIG_PCM_S24BE_DECODER
+    CONFIG_PCM_S24LE_DECODER
     CONFIG_AAC_ENCODER
     CONFIG_H264_RKMPP_ENCODER
     CONFIG_HEVC_RKMPP_ENCODER
@@ -246,8 +280,12 @@ build_ffmpeg() {
     CONFIG_MP4_MUXER
     CONFIG_MOV_MUXER
     CONFIG_NULL_MUXER
+    CONFIG_AAC_PARSER
+    CONFIG_AAC_LATM_PARSER
     CONFIG_H264_PARSER
     CONFIG_HEVC_PARSER
+    CONFIG_MPEGAUDIO_PARSER
+    CONFIG_MPEG4VIDEO_PARSER
     CONFIG_H264_MP4TOANNEXB_BSF
     CONFIG_HEVC_MP4TOANNEXB_BSF
     CONFIG_FILE_PROTOCOL
