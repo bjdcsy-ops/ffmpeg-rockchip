@@ -68,8 +68,8 @@ ARM64。宿主机只负责启动容器，不会直接编译 FFmpeg。以下命�
 
 1. 根目录的 `build-rockchip.sh` 检查 Docker 服务端架构，构建或复用
    Ubuntu 22.04 ARM64 镜像，并把源码目录挂载到容器。
-2. 容器入口 `build.sh` 读取目标配置和源码状态，按锁文件构建或复用
-   MPP、RGA。
+2. 容器入口 `build.sh` 读取目标配置和源码状态，按锁文件及仓库维护的
+   MPP ROI 补丁构建或复用 MPP、RGA。
 3. `build-ffmpeg.sh` 执行 FFmpeg configure，并编译、安装 `ffmpeg` 和
    `ffprobe`，同时确认要求的协议、编解码器和滤镜已启用。
 4. `lib/package-runtime.sh` 生成运行时目录、构建信息和 manifest，并完成
@@ -84,11 +84,12 @@ ARM64。宿主机只负责启动容器，不会直接编译 FFmpeg。以下命�
 | `build-ffmpeg.sh` | FFmpeg configure 参数、编译安装命令和组件检查 | 增减协议、编解码器、滤镜或编译选项 |
 | `config.sh` | 目标列表、CPU 参数、依赖仓库和缓存键计算 | 新增目标或调整目标参数 |
 | `dependencies.lock` | MPP、RGA 的锁定提交 | 查看当前锁定版本；更新时使用 `tools/update-dependencies.sh` |
+| `patches/mpp-roi-utils-public.patch` | 公开并修正锁定 MPP 的 RK3576/RK3588 ROI 生成接口 | 更新 MPP 或 ROI 后端时重新移植并验证补丁 |
 | `build.sh` | 容器内依赖、缓存、FFmpeg 和交付物构建编排 | 调整构建阶段或执行顺序 |
 | `Dockerfile` | Ubuntu 22.04 ARM64 构建环境和检查工具 | 增减系统依赖或升级工具 |
 
-FFmpeg 的 configure、make 和 install 命令集中在 `build-ffmpeg.sh`，修改
-FFmpeg 构建能力时通常从这里开始。
+FFmpeg 的 configure、make、ROI 无硬件测试和 install 命令集中在
+`build-ffmpeg.sh`，修改 FFmpeg 构建能力时通常从这里开始。
 
 ### `lib/`
 
@@ -144,11 +145,13 @@ git diff -- build/rockchip/dependencies.lock
 ### 依赖缓存
 
 依赖缓存键由锁定的 MPP/RGA 提交 SHA 和依赖输入哈希组成。依赖输入哈希
-只覆盖依赖构建脚本、目标编译参数以及实际 builder fingerprint。任一输入
-发生变化都会生成新的缓存目录，因此日常修改不需要人工递增缓存版本。
+覆盖依赖构建脚本、MPP ROI 补丁、目标编译参数以及实际 builder
+fingerprint。任一输入发生变化都会生成新的缓存目录，因此日常修改不需要
+人工递增缓存版本。
 
-如果修改了 `lib/build-dependencies.sh` 或目标编译参数，下一次构建重新
-编译 MPP、RGA 是预期结果。未修改这些输入时，日志中应出现
+如果修改了 `lib/build-dependencies.sh`、
+`patches/mpp-roi-utils-public.patch` 或目标编译参数，下一次构建重新编译
+MPP、RGA 是预期结果。未修改这些输入时，日志中应出现
 `Rockchip dependencies: cache hit`。
 
 RGA 的 `CC`、`CXX`、`CFLAGS`、`CXXFLAGS` 和 `LDFLAGS` 只在其 Meson

@@ -90,6 +90,7 @@ build_ffmpeg() {
     --enable-encoder=aac
     --enable-encoder=pcm_mulaw
     --enable-filter=aresample
+    --enable-filter=addroi
     --enable-filter=asetpts
     --enable-filter=setpts
     --enable-filter=hwdownload
@@ -236,7 +237,11 @@ build_ffmpeg() {
   (
     cd "$FFMPEG_BUILD_DIR" || exit 1
     rm -f -- .version
-    make -j"$(nproc)"
+    LD_LIBRARY_PATH="$DEPS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+      make -j"$(nproc)" \
+        all \
+        libavcodec/tests/rkmppenc_roi \
+        fate-rkmppenc-roi
     make install
   )
 
@@ -294,6 +299,7 @@ build_ffmpeg() {
     CONFIG_UDP_PROTOCOL
     CONFIG_RTP_PROTOCOL
     CONFIG_HTTP_PROTOCOL
+    CONFIG_ADDROI_FILTER
     CONFIG_ARESAMPLE_FILTER
     CONFIG_ASETPTS_FILTER
     CONFIG_SETPTS_FILTER

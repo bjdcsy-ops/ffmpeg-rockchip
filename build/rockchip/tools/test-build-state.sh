@@ -59,8 +59,11 @@ test_dependency_input_hash_boundaries() (
   local irrelevant_file
 
   mkdir -p "$case_root/lib"
+  mkdir -p "$case_root/patches"
   printf '# dependency build logic\n' \
     >"$case_root/lib/build-dependencies.sh"
+  printf '# MPP ROI patch\n' \
+    >"$case_root/patches/mpp-roi-utils-public.patch"
 
   for irrelevant_file in \
     Dockerfile \
@@ -107,6 +110,16 @@ test_dependency_input_hash_boundaries() (
   printf '# dependency build logic\n' \
     >"$case_root/lib/build-dependencies.sh"
 
+  printf '# changed MPP ROI patch\n' \
+    >>"$case_root/patches/mpp-roi-utils-public.patch"
+  actual_hash=$(rockchip_dependency_input_hash builder-a)
+  assert_not_equal \
+    "$baseline_hash" \
+    "$actual_hash" \
+    "MPP ROI patch did not change the dependency input hash"
+  printf '# MPP ROI patch\n' \
+    >"$case_root/patches/mpp-roi-utils-public.patch"
+
   ROCKCHIP_TARGET_CFLAGS="-O3 -mcpu=test-cpu"
   actual_hash=$(rockchip_dependency_input_hash builder-a)
   assert_not_equal \
@@ -132,6 +145,7 @@ test_dependency_input_hash_boundaries() (
 )
 
 test_rga_environment_isolation() (
+  local git_log="$TEST_ROOT/rga/git.log"
   local meson_log="$TEST_ROOT/rga/meson-environment.log"
   local variable_name
 
@@ -152,6 +166,20 @@ test_rga_environment_isolation() (
 
   git_verify_head() {
     :
+  }
+
+  git() {
+    case "$*" in
+      *" apply --check "*)
+        printf 'check\t%s\n' "$*" >>"$git_log"
+        ;;
+      *" apply "*)
+        printf 'apply\t%s\n' "$*" >>"$git_log"
+        ;;
+      *)
+        fail "dependency build used an unexpected git operation: $*"
+        ;;
+    esac
   }
 
   cmake() {
@@ -200,6 +228,17 @@ test_rga_environment_isolation() (
     6 \
     "$(wc -l <"$meson_log" | tr -d '[:space:]')" \
     "unexpected number of mocked Meson calls"
+  assert_equal \
+    2 \
+    "$(awk -F '\t' '$1 == "check" { count++ } END { print count + 0 }' "$git_log")" \
+    "MPP ROI patch preflight was not repeated for each dependency build"
+  assert_equal \
+    2 \
+    "$(awk -F '\t' '$1 == "apply" { count++ } END { print count + 0 }' "$git_log")" \
+    "MPP ROI patch application was not repeated for each dependency build"
+  if grep -Fv 'mpp-roi-utils-public.patch' "$git_log" >/dev/null; then
+    fail "dependency build used an unexpected git operation"
+  fi
 )
 
 test_ffmpeg_stamp_transitions() (

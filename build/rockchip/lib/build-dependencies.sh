@@ -9,6 +9,11 @@ build_rockchip_dependencies() {
   local deps_build_root="$BUILD_ROOT/dependencies"
   local locked_mpp_sha=$1
   local locked_rga_sha=$2
+  local build_lib_dir
+  local mpp_roi_patch
+
+  build_lib_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+  mpp_roi_patch="$build_lib_dir/../patches/mpp-roi-utils-public.patch"
 
   rm -rf -- "$deps_build_root" "$DEPS_PREFIX"
   mkdir -p "$deps_build_root" "$DEPS_PREFIX"
@@ -16,6 +21,11 @@ build_rockchip_dependencies() {
   git_clone_commit_with_retry \
     "$MPP_REPOSITORY" "$locked_mpp_sha" "$deps_build_root/rkmpp"
   git_verify_head "$deps_build_root/rkmpp" "$locked_mpp_sha"
+  if ! git -C "$deps_build_root/rkmpp" apply --check "$mpp_roi_patch"; then
+    printf 'MPP ROI patch does not apply cleanly: %s\n' "$mpp_roi_patch" >&2
+    return 1
+  fi
+  git -C "$deps_build_root/rkmpp" apply "$mpp_roi_patch"
 
   mpp_cmake_args=(
     -DCMAKE_INSTALL_PREFIX="$DEPS_PREFIX"

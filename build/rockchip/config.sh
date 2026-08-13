@@ -66,14 +66,20 @@ rockchip_builder_fingerprint() {
 rockchip_dependency_input_hash() {
   local build_dependencies_sha
   local builder_fingerprint=$1
+  local mpp_roi_patch_sha
 
   build_dependencies_sha=$(
     sha256sum "$ROCKCHIP_CONFIG_DIR/lib/build-dependencies.sh" |
       awk '{ print $1 }'
   )
+  mpp_roi_patch_sha=$(
+    sha256sum "$ROCKCHIP_CONFIG_DIR/patches/mpp-roi-utils-public.patch" |
+      awk '{ print $1 }'
+  )
 
   {
     printf 'build_dependencies_sha256=%s\n' "$build_dependencies_sha"
+    printf 'mpp_roi_patch_sha256=%s\n' "$mpp_roi_patch_sha"
     printf 'target_cflags=%s\n' "$ROCKCHIP_TARGET_CFLAGS"
     printf 'target_ldflags=%s\n' "$ROCKCHIP_TARGET_LDFLAGS"
     printf 'builder_fingerprint=%s\n' "$builder_fingerprint"

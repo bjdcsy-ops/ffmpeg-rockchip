@@ -40,6 +40,10 @@
 #include "libavutil/pixdesc.h"
 #include "libavutil/uuid.h"
 
+#if CONFIG_H264_RKMPP_ENCODER || CONFIG_HEVC_RKMPP_ENCODER
+#include "rkmppenc_roi.h"
+#endif
+
 #define H26X_HEADER_SIZE   1024
 #define H26X_ASYNC_FRAMES  4
 #define MJPEG_ASYNC_FRAMES 8
@@ -51,6 +55,9 @@ typedef struct MPPEncFrame {
     MppEncUserDataSet   mpp_sei_set;
     struct MPPEncFrame *next;
     int                 queued;
+#if CONFIG_H264_RKMPP_ENCODER || CONFIG_HEVC_RKMPP_ENCODER
+    FFRKMPPEncROIFrame  roi;
+#endif
 } MPPEncFrame;
 
 typedef struct RKMPPEncContext {
@@ -88,6 +95,9 @@ typedef struct RKMPPEncContext {
     int                intra_refresh;
     int                refresh_mode;
     int                refresh_num;
+#if CONFIG_H264_RKMPP_ENCODER || CONFIG_HEVC_RKMPP_ENCODER
+    FFRKMPPEncROIContext roi;
+#endif
 } RKMPPEncContext;
 
 static const AVRational mpp_tb = { 1, 1000000 };
@@ -101,7 +111,16 @@ static const AVRational mpp_tb = { 1, 1000000 };
 #define OFFSET(x) offsetof(RKMPPEncContext, x)
 #define VE (AV_OPT_FLAG_ENCODING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
 
+#if CONFIG_H264_RKMPP_ENCODER || CONFIG_HEVC_RKMPP_ENCODER
+#define RKMPP_ENC_ROI_OPT \
+    { "roi_socket", "Receive atomic per-frame ROI sets from a Unix datagram socket", \
+            OFFSET(roi.socket_path), AV_OPT_TYPE_STRING, { .str = NULL }, 0, 0, VE },
+#else
+#define RKMPP_ENC_ROI_OPT
+#endif
+
 #define RKMPP_ENC_COMMON_OPTS \
+    RKMPP_ENC_ROI_OPT \
     { "rc_mode", "Set the encoding rate control mode", OFFSET(rc_mode), AV_OPT_TYPE_INT, \
             { .i64 = MPP_ENC_RC_MODE_BUTT }, MPP_ENC_RC_MODE_VBR, MPP_ENC_RC_MODE_BUTT, VE, .unit = "rc_mode"}, \
         { "VBR", NULL, 0, AV_OPT_TYPE_CONST, { .i64 = MPP_ENC_RC_MODE_VBR }, 0, 0, VE, .unit = "rc_mode" }, \

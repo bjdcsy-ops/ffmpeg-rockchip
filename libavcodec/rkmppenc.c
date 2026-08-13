@@ -228,6 +228,9 @@ static void clear_unused_frames(MPPEncFrame *list)
                 list->mpp_sei_set.count = 0;
 
                 av_frame_free(&list->frame);
+#if CONFIG_H264_RKMPP_ENCODER || CONFIG_HEVC_RKMPP_ENCODER
+                list->roi.prepared = 0;
+#endif
                 list->queued = 0;
             }
         }
@@ -244,6 +247,10 @@ static void clear_frame_list(MPPEncFrame **list)
 
         frame = *list;
         *list = (*list)->next;
+
+#if CONFIG_H264_RKMPP_ENCODER || CONFIG_HEVC_RKMPP_ENCODER
+        ff_rkmppenc_roi_frame_uninit(&frame->roi);
+#endif
 
         mpp_frame = frame->mpp_frame;
         if (mpp_frame) {
@@ -929,6 +936,19 @@ static int rkmpp_send_frame(AVCodecContext *avctx, MPPEncFrame *mpp_enc_frame)
     if (frame && (ret = rkmpp_set_enc_cfg_prep(avctx, frame)) < 0)
         goto exit;
 
+#if CONFIG_H264_RKMPP_ENCODER || CONFIG_HEVC_RKMPP_ENCODER
+    if (frame &&
+        (avctx->codec_id == AV_CODEC_ID_H264 ||
+         avctx->codec_id == AV_CODEC_ID_HEVC)) {
+        ret = ff_rkmppenc_roi_prepare(avctx, &r->roi,
+                                      &mpp_enc_frame->roi,
+                                      frame, mpp_frame,
+                                      rkmpp_get_coding_type(avctx));
+        if (ret < 0)
+            goto exit;
+    }
+#endif
+
     if ((avctx->codec_id == AV_CODEC_ID_H264 ||
          avctx->codec_id == AV_CODEC_ID_HEVC) &&
          frame && frame->pict_type == AV_PICTURE_TYPE_I) {
@@ -1090,6 +1110,12 @@ static av_cold int rkmpp_encode_close(AVCodecContext *avctx)
 {
     RKMPPEncContext *r = avctx->priv_data;
 
+#if CONFIG_H264_RKMPP_ENCODER || CONFIG_HEVC_RKMPP_ENCODER
+    if (avctx->codec_id == AV_CODEC_ID_H264 ||
+        avctx->codec_id == AV_CODEC_ID_HEVC)
+        ff_rkmppenc_roi_uninit(avctx, &r->roi);
+#endif
+
     r->cfg_init = 0;
     r->async_frames = 0;
 
@@ -1152,6 +1178,12 @@ static av_cold int rkmpp_encode_init(AVCodecContext *avctx)
     int output_timeout = MPP_TIMEOUT_NON_BLOCK;
     int ret;
 
+#if CONFIG_H264_RKMPP_ENCODER || CONFIG_HEVC_RKMPP_ENCODER
+    if (avctx->codec_id == AV_CODEC_ID_H264 ||
+        avctx->codec_id == AV_CODEC_ID_HEVC)
+        r->roi.mpp_ops = &ff_rkmppenc_roi_mpp_ops;
+#endif
+
     r->cfg_init = 0;
     r->async_frames = 0;
 
@@ -1188,13 +1220,15 @@ static av_cold int rkmpp_encode_init(AVCodecContext *avctx)
     if ((ret = r->mapi->control(r->mctx, MPP_SET_INPUT_TIMEOUT,
                                 (MppParam)&input_timeout)) != MPP_OK) {
         av_log(avctx, AV_LOG_ERROR, "Failed to set input timeout: %d\n", ret);
-        return AVERROR_EXTERNAL;
+        ret = AVERROR_EXTERNAL;
+        goto fail;
     }
 
     if ((ret = r->mapi->control(r->mctx, MPP_SET_OUTPUT_TIMEOUT,
                                 (MppParam)&output_timeout)) != MPP_OK) {
         av_log(avctx, AV_LOG_ERROR, "Failed to set output timeout: %d\n", ret);
-        return AVERROR_EXTERNAL;
+        ret = AVERROR_EXTERNAL;
+        goto fail;
     }
 
     if ((ret = mpp_init(r->mctx, MPP_CTX_ENC, coding_type)) != MPP_OK) {
@@ -1217,6 +1251,15 @@ static av_cold int rkmpp_encode_init(AVCodecContext *avctx)
 
     if ((ret = rkmpp_set_enc_cfg(avctx)) < 0)
         goto fail;
+
+#if CONFIG_H264_RKMPP_ENCODER || CONFIG_HEVC_RKMPP_ENCODER
+    if (avctx->codec_id == AV_CODEC_ID_H264 ||
+        avctx->codec_id == AV_CODEC_ID_HEVC) {
+        ret = ff_rkmppenc_roi_init(avctx, &r->roi);
+        if (ret < 0)
+            goto fail;
+    }
+#endif
 
     if (avctx->codec_id == AV_CODEC_ID_H264 ||
         avctx->codec_id == AV_CODEC_ID_HEVC)
@@ -1305,6 +1348,12 @@ static av_cold int rkmpp_encode_init(AVCodecContext *avctx)
 fail:
     if (mpp_pkt)
         mpp_packet_deinit(&mpp_pkt);
+
+#if CONFIG_H264_RKMPP_ENCODER || CONFIG_HEVC_RKMPP_ENCODER
+    if (avctx->codec_id == AV_CODEC_ID_H264 ||
+        avctx->codec_id == AV_CODEC_ID_HEVC)
+        ff_rkmppenc_roi_uninit(avctx, &r->roi);
+#endif
 
     return ret;
 }

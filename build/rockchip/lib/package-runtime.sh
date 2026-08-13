@@ -334,6 +334,8 @@ Smoke checks:
   ./ffmpeg -decoders | grep rkmpp
   ./ffmpeg -encoders | grep rkmpp
   ./ffmpeg -filters | grep rkrga
+  ./ffmpeg -filters | grep addroi
+  ./ffmpeg -h encoder=h264_rkmpp | grep roi_socket
 EOF
 }
 
@@ -474,10 +476,15 @@ package_rockchip_runtime() (
     "$PACKAGE_DIR/ffmpeg" rtsp rtcp_from_packet
   rockchip_verify_encoder_option \
     "$PACKAGE_DIR/ffmpeg" hevc_rkmpp qp_ip
+  rockchip_verify_encoder_option \
+    "$PACKAGE_DIR/ffmpeg" h264_rkmpp roi_socket
+  rockchip_verify_encoder_option \
+    "$PACKAGE_DIR/ffmpeg" hevc_rkmpp roi_socket
   rockchip_verify_component_list \
     "$PACKAGE_DIR/ffmpeg" \
     filters \
     -filters \
+    addroi \
     asetpts \
     hwdownload \
     hwmap \
@@ -487,7 +494,7 @@ package_rockchip_runtime() (
     setpts \
     vpp_rkrga
   printf '%s\n' \
-    'FFmpeg component check passed: decoders=19 encoders=4 demuxers=4 muxers=3 filters=8 rtsp_options=1 encoder_options=1'
+    'FFmpeg component check passed: decoders=19 encoders=4 demuxers=4 muxers=3 filters=9 rtsp_options=1 encoder_options=3'
 
   manifest_tmp=$(mktemp "$BUILD_ROOT/.artifact-manifest.XXXXXX")
   trap 'rm -f -- "$manifest_tmp"' EXIT

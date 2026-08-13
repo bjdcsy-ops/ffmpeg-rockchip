@@ -48,6 +48,92 @@ See the [Rockchip FFmpeg build and maintenance guide](build/rockchip/README.md)
 for the file map, cache behavior, dependency updates, verification, and
 troubleshooting.
 
+## Region-of-interest encoding
+
+On RK3588 and RK3576, the FFmpeg 8.1 build supports up to eight regions of
+interest per frame with the `h264_rkmpp` and `hevc_rkmpp` encoders. A negative
+`qoffset` gives a region more quality and a positive value gives it less
+quality. The accepted range is `-1` through `1`.
+
+For a fixed ROI, use FFmpeg's `addroi` filter. Multiple filters add multiple
+regions:
+
+```bash
+./ffmpeg -i input.mp4 \
+  -vf "addroi=x=0:y=0:w=iw/2:h=ih:qoffset=-1/4,\
+addroi=x=iw/2:y=0:w=iw/2:h=ih:qoffset=1/4" \
+  -c:v h264_rkmpp -b:v 4M -an output.mp4
+```
+
+For live updates, give either RKMPP encoder a Unix datagram socket path. Put
+the socket in a private directory rather than a shared directory such as
+`/tmp`:
+
+```bash
+install -d -m 0700 /run/ffmpeg-roi
+
+./ffmpeg -i input.mp4 \
+  -c:v hevc_rkmpp \
+  -roi_socket /run/ffmpeg-roi/encoder.roi \
+  -b:v 4M -f rtsp rtsp://127.0.0.1/live/camera
+```
+
+The encoder refuses to replace an existing path. After a crash, confirm that
+no encoder owns the path and remove the stale socket before restarting. A
+normal shutdown removes only the socket inode created by that encoder.
+
+Each datagram is one complete JSON object encoded as ASCII (and therefore valid
+UTF-8). This example replaces the complete active set with two regions:
+
+```json
+{"version":1,"regions":[
+  {"x":100,"y":80,"w":640,"h":360,"qoffset":-0.2},
+  {"x":900,"y":80,"w":320,"h":240,"qoffset":0.15}
+]}
+```
+
+Send an update without opening a stream connection:
+
+```bash
+python3 - <<'PY'
+import socket
+
+path = "/run/ffmpeg-roi/encoder.roi"
+message = b'{"version":1,"regions":[{"x":100,"y":80,"w":640,"h":360,"qoffset":-0.2}]}'
+
+with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sender:
+    sender.sendto(message, path)
+PY
+```
+
+Send `{"version":1,"regions":[]}` to clear all regions. The protocol is
+strict and has the following contract:
+
+| Item | Requirement |
+| --- | --- |
+| Top level | Exactly one `version` and one `regions`; `version` is the integer `1` |
+| Region count | Zero through eight; each datagram replaces the whole set |
+| Coordinates | `x` and `y` are non-negative JSON integers; `w` and `h` are positive JSON integers; the rectangle must fit inside the encoded frame |
+| QP offset | `qoffset` is a finite JSON number in `[-1, 1]`; strings and fractions such as `"-1/4"` are invalid |
+| Object fields | Each required field occurs exactly once; unknown or duplicate fields are invalid |
+| Overlap | Regions must not overlap; this keeps behavior deterministic across the RK3588 map and RK3576 register backends |
+| JSON framing | The maximum datagram size is 4096 bytes; trailing commas, trailing content, truncated and oversized datagrams are invalid |
+| Invalid update | The packet is discarded and the last valid configuration remains active |
+| Burst updates | The encoder processes at most 256 queued datagrams before a frame and applies the last valid packet in that batch; excess packets are deferred to later frames |
+
+Before the first valid socket packet, frame side data from `addroi` is used.
+The first valid packet, including an empty `regions` array, transfers control
+to the socket for the rest of that encoder instance; later frame side data is
+ignored even if a later datagram is invalid. Restart the encoder to return to
+side-data control.
+
+ROI metadata follows the asynchronous RKMPP frame queue. A new configuration
+is selected at frame submission time, so its visible effect can lag by up to
+the current number of queued frames; it does not restart or flush the encoder.
+Internally RK3588 uses MPP's ROI2 block-map path, while RK3576 uses the legacy
+eight-region path. The command-line and JSON contracts are the same on both
+SoCs, but block alignment can make the exact affected pixel boundary differ.
+
 ## Codecs and filters
 ### Decoders/Hwaccel
 ```
@@ -72,6 +158,7 @@ troubleshooting.
 
 ### Filters
 ```
+ ... addroi           V->V       Add region of interest to frame
  ... overlay_rkrga     VV->V      Rockchip RGA (2D Raster Graphic Acceleration) video compositor
  ... scale_rkrga       V->V       Rockchip RGA (2D Raster Graphic Acceleration) video resizer and format converter
  ... vpp_rkrga         V->V       Rockchip RGA (2D Raster Graphic Acceleration) video post-process (scale/crop/transpose)
