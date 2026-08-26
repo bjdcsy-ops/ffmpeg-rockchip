@@ -740,6 +740,11 @@ static int frame_decision_roi_config_output(AVFilterLink *outlink)
     RKRGAParam rga_param = { 0 };
     int ret;
 
+    /* This filter never changes geometry, including in debug-overlay mode. */
+    outlink->w = inlink->w;
+    outlink->h = inlink->h;
+    outlink->sample_aspect_ratio = inlink->sample_aspect_ratio;
+
     if (!inl->hw_frames_ctx) {
         av_log(avctx, AV_LOG_ERROR,
                "frame_decision_roi requires an input hardware frames context\n");
