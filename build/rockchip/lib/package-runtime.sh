@@ -101,6 +101,70 @@ rockchip_verify_arm64_binary() {
   fi
 }
 
+rockchip_required_glibc_version() {
+  local binary=$1
+  local max_required
+  local version_info
+
+  if ! version_info=$(readelf --version-info "$binary" 2>&1); then
+    printf 'Failed to inspect GLIBC requirements for %s\n' "$binary" >&2
+    printf '%s\n' "$version_info" >&2
+    return 1
+  fi
+
+  max_required=$(
+    printf '%s\n' "$version_info" |
+      awk '
+        {
+          line = $0
+          while (match(line, /GLIBC_[0-9]+(\.[0-9]+)*/)) {
+            version = substr(line, RSTART + 6, RLENGTH - 6)
+            print version
+            line = substr(line, RSTART + RLENGTH)
+          }
+        }
+      ' |
+      sort -Vu |
+      tail -n 1
+  )
+  if [ -z "$max_required" ]; then
+    printf 'No GLIBC requirement found for %s\n' "$binary" >&2
+    return 1
+  fi
+
+  printf '%s\n' "$max_required"
+}
+
+rockchip_verify_glibc_abi() {
+  local ceiling=$1
+  local binary
+  local max_required
+  local overall_max=
+
+  shift
+  [ "$#" -gt 0 ] || {
+    printf 'GLIBC ABI verification requires at least one ELF file.\n' >&2
+    return 1
+  }
+
+  for binary in "$@"; do
+    max_required=$(rockchip_required_glibc_version "$binary") || return 1
+    printf 'GLIBC ABI: file=%s required=%s ceiling=%s\n' \
+      "$binary" "$max_required" "$ceiling"
+    if ! dpkg --compare-versions "$max_required" le "$ceiling"; then
+      printf 'GLIBC requirement exceeds ceiling: file=%s required=%s ceiling=%s\n' \
+        "$binary" "$max_required" "$ceiling" >&2
+      return 1
+    fi
+    if [ -z "$overall_max" ] || \
+      dpkg --compare-versions "$max_required" gt "$overall_max"; then
+      overall_max=$max_required
+    fi
+  done
+
+  ROCKCHIP_GLIBC_MAX_REQUIRED=$overall_max
+}
+
 rockchip_verify_binary_version() {
   local binary=$1
   local program=$2
@@ -186,8 +250,29 @@ rockchip_verify_encoder_option() {
   fi
 }
 
+rockchip_verify_filter_option() {
+  local binary=$1
+  local filter=$2
+  local option=$3
+  local help_output
+
+  if ! help_output=$("$binary" -hide_banner -h "filter=$filter" 2>&1); then
+    printf 'Failed to query FFmpeg filter options: filter=%s\n' \
+      "$filter" >&2
+    printf '%s\n' "$help_output" >&2
+    return 1
+  fi
+  if ! grep -Eq "^[[:space:]]+$option([[:space:]]|$)" \
+    <<<"$help_output"; then
+    printf 'Missing FFmpeg filter option: filter=%s name=%s\n' \
+      "$filter" "$option" >&2
+    return 1
+  fi
+}
+
 rockchip_write_buildinfo() {
   local artifact_version=$1
+  local glibc_max_required=$2
   local ffmpeg_script_sha
   local package_script_sha
   local source_date_utc
@@ -239,6 +324,8 @@ rockchip_write_buildinfo() {
     printf '\n# Builder and target\n'
     printf 'runner=%s\n' "$(uname -m)"
     printf 'glibc_version=%s\n' "$glibc_version"
+    printf 'glibc_abi_ceiling=%s\n' "$ROCKCHIP_GLIBC_ABI_CEILING"
+    printf 'glibc_max_required=%s\n' "$glibc_max_required"
     printf 'ffmpeg_arch=%s\n' "$ROCKCHIP_FFMPEG_ARCH"
     printf 'ffmpeg_cpu=%s\n' "$ROCKCHIP_FFMPEG_CPU"
     printf 'target_cflags=%s\n' "$TARGET_CFLAGS"
@@ -270,22 +357,25 @@ rockchip_validate_buildinfo() {
       values[key] = value
     }
     END {
-      required_keys = \
-        "buildinfo_format artifact artifact_version artifact_manifest " \
-        "manifest_format target source_sha source_state_sha source_dirty " \
-        "source_revision source_date_epoch source_date_utc mpp_repository " \
-        "mpp_sha rga_repository rga_sha builder_fingerprint " \
-        "dependency_input_hash ffmpeg_script_sha256 " \
-        "ffmpeg_build_config_sha256 package_script_sha256 runner " \
-        "glibc_version ffmpeg_arch ffmpeg_cpu target_cflags target_ldflags"
+      required_keys = "buildinfo_format artifact artifact_version"
+      required_keys = required_keys " artifact_manifest manifest_format target"
+      required_keys = required_keys " source_sha source_state_sha source_dirty"
+      required_keys = required_keys " source_revision source_date_epoch"
+      required_keys = required_keys " source_date_utc mpp_repository mpp_sha"
+      required_keys = required_keys " rga_repository rga_sha builder_fingerprint"
+      required_keys = required_keys " dependency_input_hash ffmpeg_script_sha256"
+      required_keys = required_keys " ffmpeg_build_config_sha256"
+      required_keys = required_keys " package_script_sha256 runner glibc_version"
+      required_keys = required_keys " glibc_abi_ceiling glibc_max_required"
+      required_keys = required_keys " ffmpeg_arch ffmpeg_cpu target_cflags"
+      required_keys = required_keys " target_ldflags"
       required_count = split(required_keys, required, " ")
       for (required_index = 1;
            required_index <= required_count;
            required_index++) {
         key = required[required_index]
         if (!seen[key]) {
-          printf "BUILDINFO is missing required key: %s\n", key \
-            >"/dev/stderr"
+          printf "BUILDINFO is missing required key: %s\n", key >"/dev/stderr"
           failed = 1
         }
       }
@@ -319,7 +409,7 @@ rockchip_write_runtime_readme() {
   cat >"$PACKAGE_DIR/README.txt" <<EOF
 ffmpeg-rockchip $target build
 
-Built on Ubuntu 22.04 with LTO and target-specific CPU flags.
+Built on Ubuntu 20.04 with LTO and target-specific CPU flags.
 Required MPP and RGA runtime libraries are packaged under lib/.
 FFmpeg is intentionally component-pruned for RTSP/RTP, H.264/HEVC
 rkmpp codecs, and RGA filters instead of full general-purpose codec
@@ -337,6 +427,22 @@ Smoke checks:
   ./ffmpeg -filters | grep addroi
   ./ffmpeg -h encoder=h264_rkmpp | grep roi_socket
 EOF
+
+  if [ "$target" = rk3588 ]; then
+    cat >>"$PACKAGE_DIR/README.txt" <<EOF
+
+The frame_decision_roi filter loads this external client at runtime:
+  /opt/frame-decision-service/lib/libframe_decision_client.so.1
+The client and frame-decision daemon are not bundled. Install the matching
+frame-decision-service package before enabling detection. Do not pass the
+encoder roi_socket option when using frame_decision_roi because that older
+input path overrides AVFrame ROI side data.
+
+RK3588 frame-decision smoke checks:
+  ./ffmpeg -filters | grep frame_decision_roi
+  ./ffmpeg -h filter=frame_decision_roi | grep debug_overlay
+EOF
+  fi
 }
 
 rockchip_generate_artifact_manifest() {
@@ -365,8 +471,14 @@ package_rockchip_runtime() (
   export LC_ALL=C
 
   local artifact_version
+  local filter_count=9
+  local filter_option_count=0
+  local -a glibc_binaries
+  local glibc_max_required
   local manifest_tmp
   local -a mpp_libraries
+  local option
+  local -a required_filters
   local -a rga_libraries
   local version_date
 
@@ -408,12 +520,25 @@ package_rockchip_runtime() (
   chmod 0755 "$PACKAGE_DIR/ffmpeg" "$PACKAGE_DIR/ffprobe"
   find "$PACKAGE_DIR/lib" -type f -name '*.so*' -exec chmod 0755 {} +
 
+  glibc_binaries=("$PACKAGE_DIR/ffmpeg" "$PACKAGE_DIR/ffprobe")
+  while IFS= read -r -d '' library; do
+    glibc_binaries+=("$library")
+  done < <(
+    find "$PACKAGE_DIR/lib" -type f \
+      \( -name 'librga.so*' -o -name 'librockchip_mpp.so*' \) \
+      -print0
+  )
+  rockchip_verify_glibc_abi \
+    "$ROCKCHIP_GLIBC_ABI_CEILING" \
+    "${glibc_binaries[@]}"
+  glibc_max_required=$ROCKCHIP_GLIBC_MAX_REQUIRED
+
   version_date=$(
     TZ=Asia/Shanghai date --date="@$SOURCE_DATE_EPOCH" +%Y.%m.%d
   )
   artifact_version="$version_date-$source_revision+$target"
   printf '%s\n' "$artifact_version" >"$PACKAGE_DIR/version.txt"
-  rockchip_write_buildinfo "$artifact_version"
+  rockchip_write_buildinfo "$artifact_version" "$glibc_max_required"
   rockchip_write_runtime_readme
   chmod 0644 \
     "$PACKAGE_DIR/BUILDINFO.txt" \
@@ -480,21 +605,45 @@ package_rockchip_runtime() (
     "$PACKAGE_DIR/ffmpeg" h264_rkmpp roi_socket
   rockchip_verify_encoder_option \
     "$PACKAGE_DIR/ffmpeg" hevc_rkmpp roi_socket
-  rockchip_verify_component_list \
-    "$PACKAGE_DIR/ffmpeg" \
-    filters \
-    -filters \
-    addroi \
-    asetpts \
-    hwdownload \
-    hwmap \
-    hwupload \
-    overlay_rkrga \
-    scale_rkrga \
-    setpts \
+  required_filters=(
+    addroi
+    asetpts
+    hwdownload
+    hwmap
+    hwupload
+    overlay_rkrga
+    scale_rkrga
+    setpts
     vpp_rkrga
-  printf '%s\n' \
-    'FFmpeg component check passed: decoders=19 encoders=4 demuxers=4 muxers=3 filters=9 rtsp_options=1 encoder_options=3'
+  )
+  if [ "$target" = rk3588 ]; then
+    required_filters+=(frame_decision_roi)
+    filter_count=10
+  fi
+  rockchip_verify_component_list \
+    "$PACKAGE_DIR/ffmpeg" filters -filters "${required_filters[@]}"
+  if [ "$target" = rk3588 ]; then
+    for option in \
+      sdk_library \
+      socket \
+      channel_id \
+      sample_interval_ms \
+      ttl_ms \
+      connect_timeout_ms \
+      io_timeout_ms \
+      person_qoffset \
+      motor_vehicle_qoffset \
+      non_motor_vehicle_qoffset \
+      debug_overlay \
+      debug_thickness; do
+      rockchip_verify_filter_option \
+        "$PACKAGE_DIR/ffmpeg" frame_decision_roi "$option"
+      filter_option_count=$((filter_option_count + 1))
+    done
+  fi
+  printf \
+    'FFmpeg component check passed: decoders=19 encoders=4 demuxers=4 muxers=3 filters=%d rtsp_options=1 encoder_options=3 filter_options=%d\n' \
+    "$filter_count" "$filter_option_count"
 
   manifest_tmp=$(mktemp "$BUILD_ROOT/.artifact-manifest.XXXXXX")
   trap 'rm -f -- "$manifest_tmp"' EXIT

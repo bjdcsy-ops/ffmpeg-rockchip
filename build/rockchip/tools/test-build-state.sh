@@ -147,6 +147,7 @@ test_dependency_input_hash_boundaries() (
 test_rga_environment_isolation() (
   local git_log="$TEST_ROOT/rga/git.log"
   local meson_log="$TEST_ROOT/rga/meson-environment.log"
+  local ninja_log="$TEST_ROOT/rga/ninja-environment.log"
   local variable_name
 
   mkdir -p "$(dirname -- "$meson_log")"
@@ -198,6 +199,21 @@ test_rga_environment_isolation() (
     printf 'meson %s\n' "$*" >>"$meson_log"
   }
 
+  ninja() {
+    assert_equal "ccache gcc" "${CC-}" "unexpected RGA install CC"
+    assert_equal "ccache g++" "${CXX-}" "unexpected RGA install CXX"
+    assert_equal "$TARGET_CFLAGS" "${CFLAGS-}" "unexpected RGA install CFLAGS"
+    assert_equal \
+      "$TARGET_CFLAGS -fpermissive" \
+      "${CXXFLAGS-}" \
+      "unexpected RGA install CXXFLAGS"
+    assert_equal \
+      "$TARGET_LDFLAGS" \
+      "${LDFLAGS-}" \
+      "unexpected RGA install LDFLAGS"
+    printf 'ninja %s\n' "$*" >>"$ninja_log"
+  }
+
   export CC=outer-cc
   export CXX=outer-cxx
   export CFLAGS=outer-cflags
@@ -225,9 +241,27 @@ test_rga_environment_isolation() (
   done
 
   assert_equal \
-    6 \
+    2 \
     "$(wc -l <"$meson_log" | tr -d '[:space:]')" \
     "unexpected number of mocked Meson calls"
+  if grep -Fv 'meson setup ' "$meson_log" >/dev/null; then
+    fail "dependency build used an unsupported Meson subcommand"
+  fi
+  assert_equal \
+    4 \
+    "$(wc -l <"$ninja_log" | tr -d '[:space:]')" \
+    "unexpected number of mocked Ninja calls"
+  assert_equal \
+    2 \
+    "$(awk -v command="ninja -C $BUILD_ROOT/dependencies/rkrga-build" \
+      '$0 == command { count++ } END { print count + 0 }' "$ninja_log")" \
+    "unexpected RGA build command"
+  assert_equal \
+    2 \
+    "$(awk \
+      -v command="ninja -C $BUILD_ROOT/dependencies/rkrga-build install" \
+      '$0 == command { count++ } END { print count + 0 }' "$ninja_log")" \
+    "unexpected RGA install command"
   assert_equal \
     2 \
     "$(awk -F '\t' '$1 == "check" { count++ } END { print count + 0 }' "$git_log")" \
@@ -246,9 +280,11 @@ test_ffmpeg_stamp_transitions() (
   local configure_log="$TEST_ROOT/ffmpeg-stamp/configure.log"
   local first_log="$TEST_ROOT/ffmpeg-stamp/first.log"
   local first_stamp="$TEST_ROOT/ffmpeg-stamp/first.stamp"
+  local fourth_log="$TEST_ROOT/ffmpeg-stamp/fourth.log"
   local make_log="$TEST_ROOT/ffmpeg-stamp/make.log"
   local second_log="$TEST_ROOT/ffmpeg-stamp/second.log"
   local third_log="$TEST_ROOT/ffmpeg-stamp/third.log"
+  local third_stamp="$TEST_ROOT/ffmpeg-stamp/third.stamp"
 
   SCRIPT_DIR="$case_root/scripts"
   SOURCE_DIR="$case_root/source"
@@ -263,8 +299,15 @@ test_ffmpeg_stamp_transitions() (
     "$SOURCE_DIR" \
     "$BUILD_ROOT" \
     "$case_root/fake-bin" \
+    "$case_root/frame-decision-sdk/include" \
     "$DEPS_PREFIX" \
     "$CCACHE_DIR"
+  printf 'sdk\n' \
+    >"$case_root/frame-decision-sdk/include/frame_decision_sdk.h"
+  printf 'protocol-v3\n' \
+    >"$case_root/frame-decision-sdk/include/frame_decision_protocol_v3.h"
+  printf 'async-v3\n' \
+    >"$case_root/frame-decision-sdk/include/frame_decision_async.h"
   cp "$ROCKCHIP_BUILD_DIR/build-ffmpeg.sh" "$SCRIPT_DIR/build-ffmpeg.sh"
   cp "$ROCKCHIP_BUILD_DIR/lib/compiler.sh" "$SCRIPT_DIR/lib/compiler.sh"
 
@@ -297,6 +340,9 @@ for argument in "$@"; do
       printf 'CONFIG_%s_%s=yes\n' "$config_name" "$config_type" \
         >>ffbuild/config.mak
       ;;
+    --enable-libframe-decision)
+      printf 'CONFIG_LIBFRAME_DECISION=yes\n' >>ffbuild/config.mak
+      ;;
   esac
 done
 
@@ -308,6 +354,12 @@ EOF
 set -euo pipefail
 
 printf 'make %s\n' "$*" >>"$ROCKCHIP_TEST_MAKE_LOG"
+if [[ " $* " = *" libavfilter/tests/frame_decision_roi "* ]]; then
+  mkdir -p libavfilter/tests
+  printf '#!/usr/bin/env bash\nexit 0\n' \
+    >libavfilter/tests/frame_decision_roi
+  chmod 0755 libavfilter/tests/frame_decision_roi
+fi
 EOF
 
   chmod 0755 "$SOURCE_DIR/configure" "$case_root/fake-bin/make"
@@ -315,7 +367,8 @@ EOF
   export ROCKCHIP_TEST_CONFIGURE_LOG="$configure_log"
   export ROCKCHIP_TEST_MAKE_LOG="$make_log"
 
-  export target=rk3576
+  export target=rk3588
+  export FRAME_DECISION_SDK_PREFIX="$case_root/frame-decision-sdk"
   export ROCKCHIP_FFMPEG_ARCH=aarch64
   export ROCKCHIP_FFMPEG_CPU=test-cpu
   TARGET_CFLAGS="-O2 -mcpu=test-cpu"
@@ -348,13 +401,30 @@ EOF
   assert_exists "$FFMPEG_BUILD_DIR/manual-object.o"
   assert_exists "$FFMPEG_BUILD_DIR/stale-state/keep"
 
-  printf '\n# test-only build script change\n' >>"$SCRIPT_DIR/build-ffmpeg.sh"
+  printf 'async-v3-changed\n' \
+    >>"$FRAME_DECISION_SDK_PREFIX/include/frame_decision_async.h"
   build_ffmpeg >"$third_log"
   grep -Fq \
     "Resetting FFmpeg build directory: configuration stamp changed" \
     "$third_log"
   if cmp -s "$first_stamp" "$FFMPEG_BUILD_DIR/.rockchip-config-stamp"; then
-    fail "FFmpeg configuration stamp did not change"
+    fail "frame-decision header content did not change the FFmpeg stamp"
+  fi
+  grep -Fq \
+    "frame_decision_sdk_prefix=$FRAME_DECISION_SDK_PREFIX" \
+    "$FFMPEG_BUILD_DIR/.rockchip-config-stamp"
+  grep -Eq \
+    '^frame_decision_headers_sha256=[0-9a-f]{64}$' \
+    "$FFMPEG_BUILD_DIR/.rockchip-config-stamp"
+  cp "$FFMPEG_BUILD_DIR/.rockchip-config-stamp" "$third_stamp"
+
+  printf '\n# test-only build script change\n' >>"$SCRIPT_DIR/build-ffmpeg.sh"
+  build_ffmpeg >"$fourth_log"
+  grep -Fq \
+    "Resetting FFmpeg build directory: configuration stamp changed" \
+    "$fourth_log"
+  if cmp -s "$third_stamp" "$FFMPEG_BUILD_DIR/.rockchip-config-stamp"; then
+    fail "FFmpeg build script change did not change the configuration stamp"
   fi
 
   assert_absent "$FFMPEG_BUILD_DIR/manual-object.o"
@@ -363,11 +433,11 @@ EOF
   assert_exists "$DEPS_PREFIX/cache.keep"
   assert_exists "$CCACHE_DIR/cache.keep"
   assert_equal \
-    3 \
+    4 \
     "$(wc -l <"$configure_log" | tr -d '[:space:]')" \
     "unexpected number of mocked configure calls"
   assert_equal \
-    6 \
+    8 \
     "$(wc -l <"$make_log" | tr -d '[:space:]')" \
     "unexpected number of mocked make calls"
 )
@@ -400,9 +470,81 @@ test_internal_artifact_manifest() (
   fi
 )
 
+test_glibc_abi_ceiling() (
+  local case_root="$TEST_ROOT/glibc-abi"
+  local empty_binary="$case_root/empty"
+  local focal_binary="$case_root/focal"
+  local legacy_binary="$case_root/legacy"
+  local newer_binary="$case_root/newer"
+
+  mkdir -p "$case_root"
+  : >"$empty_binary"
+  : >"$focal_binary"
+  : >"$legacy_binary"
+  : >"$newer_binary"
+
+  readelf() {
+    case "${*: -1}" in
+      "$empty_binary")
+        printf 'No version information found in this file.\n'
+        ;;
+      "$focal_binary")
+        printf 'Name: GLIBC_2.17\nName: GLIBC_2.31\n'
+        ;;
+      "$legacy_binary")
+        printf 'Name: GLIBC_2.17\n'
+        ;;
+      "$newer_binary")
+        printf 'Name: GLIBC_2.34\n'
+        ;;
+      *)
+        return 1
+        ;;
+    esac
+  }
+
+  dpkg() {
+    [ "$1" = --compare-versions ] || return 2
+    case "$2:$3:$4" in
+      2.17:le:2.31 | 2.31:le:2.31 | 2.17:gt:2.31 | 2.31:gt:2.17 | \
+        2.34:gt:2.31)
+        return 0
+        ;;
+      2.17:gt:2.17 | 2.31:gt:2.31 | 2.34:le:2.31)
+        return 1
+        ;;
+      *)
+        fail "unexpected mocked dpkg comparison: $2 $3 $4"
+        ;;
+    esac
+  }
+
+  source "$ROCKCHIP_BUILD_DIR/lib/package-runtime.sh"
+
+  assert_equal \
+    2.31 \
+    "$(rockchip_required_glibc_version "$focal_binary")" \
+    "highest GLIBC requirement was not selected"
+  rockchip_verify_glibc_abi 2.31 "$legacy_binary" "$focal_binary"
+  assert_equal \
+    2.31 \
+    "$ROCKCHIP_GLIBC_MAX_REQUIRED" \
+    "artifact-wide GLIBC maximum was not recorded"
+
+  if rockchip_verify_glibc_abi 2.31 "$newer_binary" \
+    >"$case_root/newer.log" 2>&1; then
+    fail "GLIBC ABI gate accepted a requirement above the ceiling"
+  fi
+  if rockchip_verify_glibc_abi 2.31 "$empty_binary" \
+    >"$case_root/empty.log" 2>&1; then
+    fail "GLIBC ABI gate accepted an ELF without GLIBC requirements"
+  fi
+)
+
 test_dependency_input_hash_boundaries
 test_rga_environment_isolation
 test_ffmpeg_stamp_transitions
 test_internal_artifact_manifest
+test_glibc_abi_ceiling
 
 printf 'Rockchip build state tests passed.\n'

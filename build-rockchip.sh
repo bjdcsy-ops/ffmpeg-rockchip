@@ -15,6 +15,10 @@ Usage:
   $0 <rk3588|rk3576|rv1126b|all>
   $0 clean <rk3588|rk3576|rv1126b|all>
   $0 image
+
+RK3588 builds use the vendored public V3 headers in compat/frame-decision by
+default. Set FRAME_DECISION_SDK_PREFIX to override them with an ABI-compatible
+prefix. The selected prefix is mounted read-only into the builder.
 EOF
 }
 
@@ -74,6 +78,32 @@ calculate_source_state_sha() {
   } | git hash-object --stdin
 }
 
+validate_frame_decision_sdk_prefix() {
+  local frame_decision_sdk_prefix
+  local header
+
+  frame_decision_sdk_prefix=${FRAME_DECISION_SDK_PREFIX:-"$REPOSITORY_ROOT/compat/frame-decision"}
+  if [ ! -d "$frame_decision_sdk_prefix" ]; then
+    printf 'Frame-decision SDK prefix is not a directory: %s\n' \
+      "$frame_decision_sdk_prefix" >&2
+    return 1
+  fi
+
+  frame_decision_sdk_prefix=$(cd -- "$frame_decision_sdk_prefix" && pwd -P)
+  for header in \
+    frame_decision_async.h \
+    frame_decision_protocol_v3.h \
+    frame_decision_sdk.h; do
+    if [ ! -f "$frame_decision_sdk_prefix/include/$header" ]; then
+      printf 'Missing frame-decision SDK header: %s\n' \
+        "$frame_decision_sdk_prefix/include/$header" >&2
+      return 1
+    fi
+  done
+
+  printf '%s\n' "$frame_decision_sdk_prefix"
+}
+
 clean_target() {
   local target=$1
 
@@ -90,6 +120,7 @@ clean_target() {
 
 build_target() {
   local -a docker_args
+  local frame_decision_sdk_prefix
   local source_dirty
   local source_revision
   local source_sha
@@ -130,6 +161,14 @@ build_target() {
     --env "SOURCE_DIRTY=$source_dirty"
     --env "SOURCE_REVISION=$source_revision"
   )
+
+  if [ "$target" = rk3588 ]; then
+    frame_decision_sdk_prefix=$(validate_frame_decision_sdk_prefix)
+    docker_args+=(
+      --volume "$frame_decision_sdk_prefix:/frame-decision-sdk:ro"
+      --env "FRAME_DECISION_SDK_PREFIX=/frame-decision-sdk"
+    )
+  fi
 
   for variable_name in \
     GIT_RETRY_ATTEMPTS \
@@ -182,6 +221,12 @@ if [ "$command_name" = clean ]; then
   done
   exit 0
 fi
+
+for target in "${selected_targets[@]}"; do
+  if [ "$target" = rk3588 ]; then
+    validate_frame_decision_sdk_prefix >/dev/null
+  fi
+done
 
 assert_docker_arm64
 build_image

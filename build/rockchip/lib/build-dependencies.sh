@@ -70,7 +70,7 @@ build_rockchip_dependencies() {
       "$deps_build_root/rkrga" \
       "$deps_build_root/rkrga-build" \
       "${rga_meson_args[@]}"
-    meson compile -C "$deps_build_root/rkrga-build"
-    meson install -C "$deps_build_root/rkrga-build"
+    ninja -C "$deps_build_root/rkrga-build"
+    ninja -C "$deps_build_root/rkrga-build" install
   )
 }

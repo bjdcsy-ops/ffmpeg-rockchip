@@ -14,8 +14,9 @@ source "$ROCKCHIP_CONFIG_DIR/dependencies.lock"
 MPP_SHA=$ROCKCHIP_LOCKED_MPP_SHA
 RGA_SHA=$ROCKCHIP_LOCKED_RGA_SHA
 export MPP_SHA RGA_SHA
-ROCKCHIP_CCACHE_CACHE_VERSION=${ROCKCHIP_CCACHE_CACHE_VERSION:-v3}
-ROCKCHIP_BUILD_IMAGE=${ROCKCHIP_BUILD_IMAGE:-ffmpeg-rockchip-build:ubuntu22-arm64}
+ROCKCHIP_CCACHE_CACHE_VERSION=${ROCKCHIP_CCACHE_CACHE_VERSION:-v4}
+ROCKCHIP_BUILD_IMAGE=${ROCKCHIP_BUILD_IMAGE:-ffmpeg-rockchip-build:ubuntu20-arm64}
+ROCKCHIP_GLIBC_ABI_CEILING=2.31
 
 ROCKCHIP_TARGETS=(rk3588 rk3576 rv1126b)
 
@@ -24,21 +25,21 @@ rockchip_load_target() {
 
   case "$target" in
     rk3588)
-      ROCKCHIP_ARTIFACT=ffmpeg-rockchip-rk3588-ubuntu22-arm64
+      ROCKCHIP_ARTIFACT=ffmpeg-rockchip-rk3588-ubuntu20-arm64
       ROCKCHIP_FFMPEG_ARCH=aarch64
       ROCKCHIP_FFMPEG_CPU=cortex-a76.cortex-a55
       ROCKCHIP_TARGET_CFLAGS="-O3 -pipe -mcpu=cortex-a76.cortex-a55 -mtune=cortex-a76.cortex-a55 -fno-semantic-interposition"
       ROCKCHIP_TARGET_LDFLAGS=""
       ;;
     rk3576)
-      ROCKCHIP_ARTIFACT=ffmpeg-rockchip-rk3576-ubuntu22-arm64
+      ROCKCHIP_ARTIFACT=ffmpeg-rockchip-rk3576-ubuntu20-arm64
       ROCKCHIP_FFMPEG_ARCH=aarch64
       ROCKCHIP_FFMPEG_CPU=cortex-a72.cortex-a53
       ROCKCHIP_TARGET_CFLAGS="-O3 -pipe -mcpu=cortex-a72.cortex-a53 -mtune=cortex-a72.cortex-a53 -fno-semantic-interposition"
       ROCKCHIP_TARGET_LDFLAGS=""
       ;;
     rv1126b)
-      ROCKCHIP_ARTIFACT=ffmpeg-rockchip-rv1126b-ubuntu22-arm64
+      ROCKCHIP_ARTIFACT=ffmpeg-rockchip-rv1126b-ubuntu20-arm64
       ROCKCHIP_FFMPEG_ARCH=aarch64
       ROCKCHIP_FFMPEG_CPU=cortex-a53
       ROCKCHIP_TARGET_CFLAGS="-O3 -pipe -mcpu=cortex-a53 -mtune=cortex-a53 -fno-semantic-interposition"

@@ -235,6 +235,7 @@ External library support:
   --enable-libflite        enable flite (voice synthesis) support via libflite [no]
   --enable-libfontconfig   enable libfontconfig, useful for drawtext filter [no]
   --enable-libfreetype     enable libfreetype, needed for drawtext filter [no]
+  --enable-libframe-decision enable frame-decision V3 DMA-BUF client [no]
   --enable-libfribidi      enable libfribidi, improves drawtext filter [no]
   --enable-libharfbuzz     enable libharfbuzz, needed for drawtext filter [no]
   --enable-libglslang      enable runtime GLSL->SPIRV compilation via libglslang [no]
@@ -2048,6 +2049,7 @@ EXTERNAL_LIBRARY_LIST="
     libdc1394
     libflite
     libfontconfig
+    libframe_decision
     libfreetype
     libfribidi
     libharfbuzz
@@ -4141,6 +4143,7 @@ erosion_opencl_filter_deps="opencl"
 find_rect_filter_deps="avcodec avformat gpl"
 flip_vulkan_filter_deps="vulkan spirv_library"
 flite_filter_deps="libflite threads"
+frame_decision_roi_filter_deps="libdl libframe_decision pthreads rkmpp rkrga"
 framerate_filter_select="scene_sad"
 freezedetect_filter_select="scene_sad"
 frei0r_deps_any="libdl LoadLibrary"
@@ -7275,6 +7278,7 @@ flite_extralibs="-lflite_cmu_time_awb -lflite_cmu_us_awb -lflite_cmu_us_kal -lfl
 enabled libflite          && require libflite "flite/flite.h" flite_init $flite_extralibs
 enabled fontconfig        && enable libfontconfig
 enabled libfontconfig     && require_pkg_config libfontconfig fontconfig "fontconfig/fontconfig.h" FcInit
+enabled libframe_decision && require_headers frame_decision_async.h
 enabled libfreetype       && require_pkg_config libfreetype freetype2 "ft2build.h FT_FREETYPE_H" FT_Init_FreeType
 enabled libfribidi        && require_pkg_config libfribidi fribidi fribidi.h fribidi_version_info
 enabled libharfbuzz       && require_pkg_config libharfbuzz harfbuzz hb.h hb_buffer_create

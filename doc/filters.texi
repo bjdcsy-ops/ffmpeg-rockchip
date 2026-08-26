@@ -14654,6 +14654,93 @@ fps=fps=film:round=near
 @end example
 @end itemize
 
+@section frame_decision_roi
+
+Attach dynamic regions of interest from a frame-decision V3 service to
+linear NV12 DRM frames.  The filter is intended for Rockchip MPP decode and
+encode pipelines.
+
+Detection runs asynchronously.  The media thread submits sampled DMA-BUF
+frames to a worker without waiting for inference, and applies the newest
+result which is still inside its configured lifetime.  A result therefore
+describes recent detector state; it is not bound to the exact output frame
+which receives the ROI metadata.  If the detector is unavailable, encoding
+continues without fresh ROI metadata.
+
+The input must use @code{AV_PIX_FMT_DRM_PRIME} with one linear
+@code{DRM_FORMAT_NV12} object.  AFBC, P010, and other layouts are rejected.
+Place this filter after the final size-changing crop or scale filter and
+immediately before the encoder, because a later size change removes or
+invalidates ROI coordinates.
+
+The filter accepts the following options:
+
+@table @option
+@item sdk_library
+Path to the frame-decision client shared library.  The default is
+@file{/opt/frame-decision-service/lib/libframe_decision_client.so.1}.
+
+@item socket
+Path to the frame-decision V3 Unix socket.  The default is
+@file{/run/frame-decision/frame-decision-v3.sock}.
+
+@item channel_id
+Logical detector channel in the range 0 to 15.  It is required when any
+category has a non-zero quantisation offset.
+
+@item sample_interval_ms
+Minimum interval between detector submissions in milliseconds.  The default
+is 100.  If inference is slower than the requested interval, an unsent sample
+is replaced by the newest frame.
+
+@item ttl_ms
+Maximum ROI age measured from capture of the submitted source frame.  The
+default is 500 milliseconds.  Expired results are not attached.
+
+@item connect_timeout_ms
+Detector connection timeout in milliseconds.  The default is 1000.
+
+@item io_timeout_ms
+Detector I/O timeout in milliseconds.  The default is 5000.
+
+@item person_qoffset
+Quantisation offset for person detections.
+
+@item motor_vehicle_qoffset
+Quantisation offset for motor-vehicle detections.
+
+@item non_motor_vehicle_qoffset
+Quantisation offset for non-motor-vehicle detections.
+
+Each category offset is a rational in the range -1 to +1.  As with
+@ref{addroi}, a negative value requests better quality and a positive value
+requests worse quality.  Zero disables the category.  When all three values
+are zero, detector submission is disabled and existing ROI side data is
+preserved.
+
+@item debug_overlay
+If enabled, copy the frame through RGA and draw bright green borders around
+the normalized ROI set.  This development mode changes pixels and adds an RGA
+operation.  It is disabled by default; production mode passes pixel buffers
+through unchanged.
+
+@item debug_thickness
+Even border thickness from 2 to 16 pixels used by @option{debug_overlay}.
+The default is 4.
+@end table
+
+@subsection Example
+
+Decode an H.264 RTSP stream to linear NV12, resize it, protect people, and
+encode it with Rockchip MPP:
+
+@example
+ffmpeg -rtsp_transport tcp -c:v h264_rkmpp -afbc 0 -i input \
+  -vf "scale_rkrga=w=1920:h=1080:format=nv12:afbc=0,\
+frame_decision_roi=channel_id=0:person_qoffset=-3/20" \
+  -c:v h264_rkmpp -b:v 4M -an output
+@end example
+
 @section framepack
 
 Pack two different video streams into a stereoscopic video, setting proper

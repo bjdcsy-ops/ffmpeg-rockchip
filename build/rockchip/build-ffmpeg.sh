@@ -11,6 +11,11 @@ build_ffmpeg() {
   local configure_args_sha
   local configure_sha
   local compiler_sha
+  local extra_cflags
+  local frame_decision_headers_sha256=disabled
+  local frame_decision_sdk_prefix=disabled
+  local header
+  local -a make_targets
   local -a required_configs
   local build_ffmpeg_sha
   local config_name
@@ -18,6 +23,35 @@ build_ffmpeg() {
   local stamp_changed
   local stamp_file
   local stamp_tmp
+
+  extra_cflags="-I$DEPS_PREFIX/include $TARGET_CFLAGS"
+  if [ "$target" = rk3588 ]; then
+    : "${FRAME_DECISION_SDK_PREFIX:?RK3588 requires FRAME_DECISION_SDK_PREFIX}"
+    frame_decision_sdk_prefix=$FRAME_DECISION_SDK_PREFIX
+    for header in \
+      frame_decision_async.h \
+      frame_decision_protocol_v3.h \
+      frame_decision_sdk.h; do
+      if [ ! -f "$frame_decision_sdk_prefix/include/$header" ]; then
+        printf 'Missing frame-decision SDK header: %s\n' \
+          "$frame_decision_sdk_prefix/include/$header" >&2
+        return 1
+      fi
+    done
+    frame_decision_headers_sha256=$(
+      for header in \
+        frame_decision_async.h \
+        frame_decision_protocol_v3.h \
+        frame_decision_sdk.h; do
+        printf '%s\0' "$header"
+        sha256sum "$frame_decision_sdk_prefix/include/$header" |
+          awk '{ print $1 }'
+      done |
+        sha256sum |
+        awk '{ print $1 }'
+    )
+    extra_cflags="$extra_cflags -I$frame_decision_sdk_prefix/include"
+  fi
 
   configure_args=(
     --prefix="$INSTALL_PREFIX"
@@ -103,9 +137,15 @@ build_ffmpeg() {
     --enable-filter=null
     "--arch=$ROCKCHIP_FFMPEG_ARCH"
     "--cpu=$ROCKCHIP_FFMPEG_CPU"
-    "--extra-cflags=-I$DEPS_PREFIX/include $TARGET_CFLAGS"
+    "--extra-cflags=$extra_cflags"
     "--extra-ldflags=-L$DEPS_PREFIX/lib $TARGET_LDFLAGS"
   )
+  if [ "$target" = rk3588 ]; then
+    configure_args+=(
+      --enable-libframe-decision
+      --enable-filter=frame_decision_roi
+    )
+  fi
 
   configure_args_sha=$(
     printf '%s\0' "${configure_args[@]}" |
@@ -136,6 +176,7 @@ build_ffmpeg() {
       CPATH \
       C_INCLUDE_PATH \
       CPLUS_INCLUDE_PATH \
+      FRAME_DECISION_SDK_PREFIX \
       LIBRARY_PATH \
       LD_LIBRARY_PATH; do
       printf '%s\0%s\0' \
@@ -165,6 +206,8 @@ build_ffmpeg() {
       "builder_fingerprint=$builder_fingerprint" \
       "dependency_cache_key=$deps_cache_key" \
       "dependency_input_hash=$dependency_input_hash" \
+      "frame_decision_sdk_prefix=$frame_decision_sdk_prefix" \
+      "frame_decision_headers_sha256=$frame_decision_headers_sha256" \
       "source_date_epoch=$SOURCE_DATE_EPOCH" |
       sha256sum |
       awk '{ print $1 }'
@@ -192,6 +235,10 @@ build_ffmpeg() {
     printf 'builder_fingerprint=%s\n' "$builder_fingerprint"
     printf 'dependency_cache_key=%s\n' "$deps_cache_key"
     printf 'dependency_input_hash=%s\n' "$dependency_input_hash"
+    printf 'frame_decision_sdk_prefix=%s\n' \
+      "$frame_decision_sdk_prefix"
+    printf 'frame_decision_headers_sha256=%s\n' \
+      "$frame_decision_headers_sha256"
     printf 'source_date_epoch=%s\n' "$SOURCE_DATE_EPOCH"
     printf 'target=%s\n' "$target"
     printf 'ffmpeg_arch=%s\n' "$ROCKCHIP_FFMPEG_ARCH"
@@ -237,11 +284,21 @@ build_ffmpeg() {
   (
     cd "$FFMPEG_BUILD_DIR" || exit 1
     rm -f -- .version
+    make_targets=(
+      all
+      libavcodec/tests/rkmppenc_roi
+      fate-rkmppenc-roi
+    )
+    if [ "$target" = rk3588 ]; then
+      make_targets+=(libavfilter/tests/frame_decision_roi)
+    fi
     LD_LIBRARY_PATH="$DEPS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
       make -j"$(nproc)" \
-        all \
-        libavcodec/tests/rkmppenc_roi \
-        fate-rkmppenc-roi
+        "${make_targets[@]}"
+    if [ "$target" = rk3588 ]; then
+      LD_LIBRARY_PATH="$DEPS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+        ./libavfilter/tests/frame_decision_roi
+    fi
     make install
   )
 
@@ -312,6 +369,12 @@ build_ffmpeg() {
     CONFIG_FORMAT_FILTER
     CONFIG_NULL_FILTER
   )
+  if [ "$target" = rk3588 ]; then
+    required_configs+=(
+    CONFIG_FRAME_DECISION_ROI_FILTER
+    CONFIG_LIBFRAME_DECISION
+    )
+  fi
 
   for config_name in "${required_configs[@]}"; do
     if ! grep -qx "${config_name}=yes" \
