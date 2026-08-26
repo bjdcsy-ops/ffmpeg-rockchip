@@ -21,9 +21,6 @@
 #ifndef AVCODEC_RKMPPENC_ROI_H
 #define AVCODEC_RKMPPENC_ROI_H
 
-#include <stddef.h>
-#include <stdint.h>
-
 #include <rockchip/rk_mpi.h>
 #include <rockchip/mpp_enc_roi_utils.h>
 
@@ -32,8 +29,6 @@
 #include "avcodec.h"
 
 #define FF_RKMPPENC_ROI_MAX_REGIONS 8
-#define FF_RKMPPENC_ROI_MAX_PACKET_SIZE 4096
-#define FF_RKMPPENC_ROI_MAX_PACKETS_PER_FRAME 256
 
 /**
  * MPP calls used by the ROI bridge.
@@ -55,28 +50,14 @@ extern const FFRKMPPEncROIOps ff_rkmppenc_roi_mpp_ops;
 /**
  * Encoder-lifetime ROI state.
  *
- * Embed this structure in RKMPPEncContext.  socket_path is an AVOption-owned
- * string: ff_rkmppenc_roi_uninit() deliberately does not free it.
+ * Embed this structure in RKMPPEncContext.  MPP ROI metadata is created lazily
+ * after the first frame carrying AV_FRAME_DATA_REGIONS_OF_INTEREST.
  */
 typedef struct FFRKMPPEncROIContext {
-    char               *socket_path;
     const FFRKMPPEncROIOps *mpp_ops;
     int                 initialized;
-    int                 socket_fd;
-    uint64_t            socket_dev;
-    uint64_t            socket_ino;
-    int                 socket_bound;
-
-    AVRegionOfInterest  socket_regions[FF_RKMPPENC_ROI_MAX_REGIONS];
-    int                 socket_nb_regions;
-    int                 socket_active;
-    uint64_t            socket_generation;
-
     int                 metadata_used;
     int                 regions_warned;
-    int                 invalid_packet_warned;
-    int                 budget_warned;
-    int                 max_packets_per_frame;
 } FFRKMPPEncROIContext;
 
 /**
@@ -102,11 +83,9 @@ void ff_rkmppenc_roi_uninit(AVCodecContext *avctx,
 void ff_rkmppenc_roi_frame_uninit(FFRKMPPEncROIFrame *roi_frame);
 
 /**
- * Drain pending socket updates and attach the selected ROI set to mpp_frame.
- *
- * Before the first valid socket update, AV_FRAME_DATA_REGIONS_OF_INTEREST on
- * frame is used.  After that update, the last valid complete socket state is
- * used for the remainder of the encoder lifetime, including an empty state.
+ * Attach AV_FRAME_DATA_REGIONS_OF_INTEREST from frame to mpp_frame.
+ * Once ROI metadata has been used, a later frame without ROI side data attaches
+ * an empty set so an asynchronous MPP slot cannot retain stale regions.
  */
 int ff_rkmppenc_roi_prepare(AVCodecContext *avctx,
                             FFRKMPPEncROIContext *roi,
@@ -114,14 +93,9 @@ int ff_rkmppenc_roi_prepare(AVCodecContext *avctx,
                             const AVFrame *frame, MppFrame mpp_frame,
                             MppCodingType coding_type);
 
-/* Internal helpers are exposed for the hardware-independent unit test. */
-int ff_rkmppenc_roi_parse_json(AVRegionOfInterest *regions, int *nb_regions,
-                               const char *json, size_t json_size);
+/* Internal mapping helper exposed for the hardware-independent unit test. */
 int ff_rkmppenc_roi_map_region(RoiRegionCfg *mpp_roi,
                                const AVRegionOfInterest *roi,
                                int frame_width, int frame_height);
-int ff_rkmppenc_roi_drain(AVCodecContext *avctx,
-                          FFRKMPPEncROIContext *roi,
-                          int frame_width, int frame_height);
 
 #endif /* AVCODEC_RKMPPENC_ROI_H */

@@ -65,74 +65,36 @@ addroi=x=iw/2:y=0:w=iw/2:h=ih:qoffset=1/4" \
   -c:v h264_rkmpp -b:v 4M -an output.mp4
 ```
 
-For live updates, give either RKMPP encoder a Unix datagram socket path. Put
-the socket in a private directory rather than a shared directory such as
-`/tmp`:
+For live detections on RK3588, place the `frame_decision_roi` filter after the
+final size-changing filter and immediately before the RKMPP encoder. The filter
+submits sampled DMA-BUF frames to frame-decision asynchronously and writes the
+newest fresh detection set to standard FFmpeg ROI frame side data:
 
 ```bash
-install -d -m 0700 /run/ffmpeg-roi
-
-./ffmpeg -i input.mp4 \
+./ffmpeg -rtsp_transport tcp -c:v h264_rkmpp -afbc 0 -i input \
+  -vf "scale_rkrga=w=1920:h=1080:format=nv12:afbc=0,\
+frame_decision_roi=channel_id=0:person_qoffset=-3/20:\
+motor_vehicle_qoffset=-3/20:debug_overlay=0" \
   -c:v hevc_rkmpp \
-  -roi_socket /run/ffmpeg-roi/encoder.roi \
   -b:v 4M -f rtsp rtsp://127.0.0.1/live/camera
 ```
 
-The encoder refuses to replace an existing path. After a crash, confirm that
-no encoder owns the path and remove the stale socket before restarting. A
-normal shutdown removes only the socket inode created by that encoder.
-
-Each datagram is one complete JSON object encoded as ASCII (and therefore valid
-UTF-8). This example replaces the complete active set with two regions:
-
-```json
-{"version":1,"regions":[
-  {"x":100,"y":80,"w":640,"h":360,"qoffset":-0.2},
-  {"x":900,"y":80,"w":320,"h":240,"qoffset":0.15}
-]}
-```
-
-Send an update without opening a stream connection:
-
-```bash
-python3 - <<'PY'
-import socket
-
-path = "/run/ffmpeg-roi/encoder.roi"
-message = b'{"version":1,"regions":[{"x":100,"y":80,"w":640,"h":360,"qoffset":-0.2}]}'
-
-with socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM) as sender:
-    sender.sendto(message, path)
-PY
-```
-
-Send `{"version":1,"regions":[]}` to clear all regions. The protocol is
-strict and has the following contract:
-
-| Item | Requirement |
-| --- | --- |
-| Top level | Exactly one `version` and one `regions`; `version` is the integer `1` |
-| Region count | Zero through eight; each datagram replaces the whole set |
-| Coordinates | `x` and `y` are non-negative JSON integers; `w` and `h` are positive JSON integers; the rectangle must fit inside the encoded frame |
-| QP offset | `qoffset` is a finite JSON number in `[-1, 1]`; strings and fractions such as `"-1/4"` are invalid |
-| Object fields | Each required field occurs exactly once; unknown or duplicate fields are invalid |
-| Overlap | Regions must not overlap; this keeps behavior deterministic across the RK3588 map and RK3576 register backends |
-| JSON framing | The maximum datagram size is 4096 bytes; trailing commas, trailing content, truncated and oversized datagrams are invalid |
-| Invalid update | The packet is discarded and the last valid configuration remains active |
-| Burst updates | The encoder processes at most 256 queued datagrams before a frame and applies the last valid packet in that batch; excess packets are deferred to later frames |
-
-Before the first valid socket packet, frame side data from `addroi` is used.
-The first valid packet, including an empty `regions` array, transfers control
-to the socket for the rest of that encoder instance; later frame side data is
-ignored even if a later datagram is invalid. Restart the encoder to return to
-side-data control.
+The frame-decision client library defaults to
+`/opt/frame-decision-service/lib/libframe_decision_client.so.1`, and its V3
+service socket defaults to `/run/frame-decision/frame-decision-v3.sock`. The
+filter supports separate weights for people, motor vehicles, and non-motor
+vehicles, caps the normalized set at eight non-overlapping regions, and clears
+expired results according to `ttl_ms`. Set `debug_overlay=1` only during
+development to draw the selected rectangles into a separate RGA output frame.
+See the `frame_decision_roi` filter documentation for all options and input
+layout requirements.
 
 ROI metadata follows the asynchronous RKMPP frame queue. A new configuration
 is selected at frame submission time, so its visible effect can lag by up to
 the current number of queued frames; it does not restart or flush the encoder.
 Internally RK3588 uses MPP's ROI2 block-map path, while RK3576 uses the legacy
-eight-region path. The command-line and JSON contracts are the same on both
-SoCs, but block alignment can make the exact affected pixel boundary differ.
+eight-region path. Both consume the same AVFrame ROI side-data contract, but
+block alignment can make the exact affected pixel boundary differ.
 
 ## Codecs and filters
 ### Decoders/Hwaccel

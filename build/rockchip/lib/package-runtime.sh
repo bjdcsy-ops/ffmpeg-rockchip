@@ -250,6 +250,25 @@ rockchip_verify_encoder_option() {
   fi
 }
 
+rockchip_verify_encoder_option_absent() {
+  local binary=$1
+  local encoder=$2
+  local option=$3
+  local help_output
+
+  if ! help_output=$("$binary" -hide_banner -h "encoder=$encoder" 2>&1); then
+    printf 'Failed to query FFmpeg encoder options: encoder=%s\n' \
+      "$encoder" >&2
+    printf '%s\n' "$help_output" >&2
+    return 1
+  fi
+  if grep -Eq "^[[:space:]]+-$option([[:space:]]|$)" <<<"$help_output"; then
+    printf 'Unexpected FFmpeg encoder option: encoder=%s name=%s\n' \
+      "$encoder" "$option" >&2
+    return 1
+  fi
+}
+
 rockchip_verify_filter_option() {
   local binary=$1
   local filter=$2
@@ -425,7 +444,6 @@ Smoke checks:
   ./ffmpeg -encoders | grep rkmpp
   ./ffmpeg -filters | grep rkrga
   ./ffmpeg -filters | grep addroi
-  ./ffmpeg -h encoder=h264_rkmpp | grep roi_socket
 EOF
 
   if [ "$target" = rk3588 ]; then
@@ -434,9 +452,8 @@ EOF
 The frame_decision_roi filter loads this external client at runtime:
   /opt/frame-decision-service/lib/libframe_decision_client.so.1
 The client and frame-decision daemon are not bundled. Install the matching
-frame-decision-service package before enabling detection. Do not pass the
-encoder roi_socket option when using frame_decision_roi because that older
-input path overrides AVFrame ROI side data.
+frame-decision-service package before enabling detection. The filter writes
+standard AVFrame ROI side data which the RKMPP encoder consumes directly.
 
 RK3588 frame-decision smoke checks:
   ./ffmpeg -filters | grep frame_decision_roi
@@ -601,9 +618,9 @@ package_rockchip_runtime() (
     "$PACKAGE_DIR/ffmpeg" rtsp rtcp_from_packet
   rockchip_verify_encoder_option \
     "$PACKAGE_DIR/ffmpeg" hevc_rkmpp qp_ip
-  rockchip_verify_encoder_option \
+  rockchip_verify_encoder_option_absent \
     "$PACKAGE_DIR/ffmpeg" h264_rkmpp roi_socket
-  rockchip_verify_encoder_option \
+  rockchip_verify_encoder_option_absent \
     "$PACKAGE_DIR/ffmpeg" hevc_rkmpp roi_socket
   required_filters=(
     addroi
@@ -642,7 +659,7 @@ package_rockchip_runtime() (
     done
   fi
   printf \
-    'FFmpeg component check passed: decoders=19 encoders=4 demuxers=4 muxers=3 filters=%d rtsp_options=1 encoder_options=3 filter_options=%d\n' \
+    'FFmpeg component check passed: decoders=19 encoders=4 demuxers=4 muxers=3 filters=%d rtsp_options=1 encoder_options=1 filter_options=%d\n' \
     "$filter_count" "$filter_option_count"
 
   manifest_tmp=$(mktemp "$BUILD_ROOT/.artifact-manifest.XXXXXX")
