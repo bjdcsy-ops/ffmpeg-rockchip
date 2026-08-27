@@ -479,6 +479,7 @@ package_rockchip_runtime() (
     filters \
     -filters \
     asetpts \
+    fpscap \
     hwdownload \
     hwmap \
     hwupload \
@@ -487,7 +488,7 @@ package_rockchip_runtime() (
     setpts \
     vpp_rkrga
   printf '%s\n' \
-    'FFmpeg component check passed: decoders=19 encoders=4 demuxers=4 muxers=3 filters=8 rtsp_options=1 encoder_options=1'
+    'FFmpeg component check passed: decoders=19 encoders=4 demuxers=4 muxers=3 filters=9 rtsp_options=1 encoder_options=1'
 
   manifest_tmp=$(mktemp "$BUILD_ROOT/.artifact-manifest.XXXXXX")
   trap 'rm -f -- "$manifest_tmp"' EXIT

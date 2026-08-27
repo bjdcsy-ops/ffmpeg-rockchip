@@ -92,6 +92,7 @@ build_ffmpeg() {
     --enable-filter=aresample
     --enable-filter=asetpts
     --enable-filter=setpts
+    --enable-filter=fpscap
     --enable-filter=hwdownload
     --enable-filter=hwmap
     --enable-filter=hwupload
@@ -297,6 +298,7 @@ build_ffmpeg() {
     CONFIG_ARESAMPLE_FILTER
     CONFIG_ASETPTS_FILTER
     CONFIG_SETPTS_FILTER
+    CONFIG_FPSCAP_FILTER
     CONFIG_HWDOWNLOAD_FILTER
     CONFIG_HWMAP_FILTER
     CONFIG_HWUPLOAD_FILTER
