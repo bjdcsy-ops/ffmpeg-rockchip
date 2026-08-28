@@ -475,10 +475,11 @@ fate-filter-fpscap-down-50: CMD = framecrc -lavfi testsrc2=s=64x64:r=50:d=1,fpsc
 fate-filter-fpscap-down-ntsc: CMD = framecrc -lavfi testsrc2=s=64x64:r=30000/1001:d=1,fpscap=fps=20 -fps_mode passthrough -enc_time_base filter
 fate-filter-fpscap-fractional: CMD = framecrc -lavfi testsrc2=s=64x64:r=2:d=2,fpscap=1/2 -fps_mode passthrough -enc_time_base filter
 
-FATE_FILTER-$(call FILTERFRAMECRC, FPSCAP TESTSRC2 SETPTS) += fate-filter-fpscap-gap fate-filter-fpscap-duplicate fate-filter-fpscap-negative-pts
+FATE_FILTER-$(call FILTERFRAMECRC, FPSCAP TESTSRC2 SETPTS) += fate-filter-fpscap-gap fate-filter-fpscap-duplicate fate-filter-fpscap-negative-pts fate-filter-fpscap-boundary
 fate-filter-fpscap-gap: CMD = framecrc -lavfi "testsrc2=s=64x64:r=40:d=0.25,setpts=PTS+gte(N\,4)*10,fpscap=20" -fps_mode passthrough -enc_time_base filter
 fate-filter-fpscap-duplicate: CMD = framecrc -lavfi "testsrc2=s=64x64:r=40:d=0.25,setpts=floor(N/2)*2,fpscap=20" -fps_mode passthrough -enc_time_base filter
 fate-filter-fpscap-negative-pts: CMD = framecrc -lavfi "testsrc2=s=64x64:r=40:d=0.25,setpts=PTS-10,fpscap=20" -fps_mode passthrough -enc_time_base filter
+fate-filter-fpscap-boundary: CMD = framecrc -lavfi "testsrc2=s=64x64:r=1000:d=0.003,setpts=if(eq(N\,0)\,0\,if(eq(N\,1)\,99\,100)),fpscap=20" -fps_mode passthrough -enc_time_base filter
 
 FATE_FILTER-$(call FILTERFRAMECRC, FPSCAP TESTSRC2 SETPTS SETTB) += fate-filter-fpscap-actual-30
 fate-filter-fpscap-actual-30: CMD = framecrc -lavfi "testsrc2=s=64x64:r=15:d=2,settb=AVTB,setpts=PTS/2,fpscap=20" -fps_mode passthrough -enc_time_base filter
@@ -489,12 +490,11 @@ fate-filter-fpscap-reject-backward: CMP = null
 fate-filter-fpscap-reject-nopts: CMD = ffmpeg -v error -lavfi "testsrc2=s=64x64:r=15:d=0.4,setpts=if(eq(N\,4)\,NAN\,PTS),fpscap=20" -f null - 2>&1 | grep -Fq "Missing input PTS"
 fate-filter-fpscap-reject-nopts: CMP = null
 
-FATE_FILTER-$(call ALLYES, FPSCAP_FILTER LAVFI_INDEV WRAPPED_AVFRAME_ENCODER NULL_MUXER PIPE_PROTOCOL) += fate-filter-fpscap-reject-unknown-rate
-fate-filter-fpscap-reject-unknown-rate: CMD = ffmpeg -v error -f lavfi -i "buffer=video_size=64x64:pix_fmt=yuv420p:time_base=1/1000:pixel_aspect=1/1,fpscap=20" -f null - 2>&1 | grep -Fq "Input frame rate is unknown or invalid"
-fate-filter-fpscap-reject-unknown-rate: CMP = null
-
 FATE_FILTER_FFPROBE-$(call ALLYES, FFPROBE FPSCAP_FILTER TESTSRC2_FILTER SETPTS_FILTER SETTB_FILTER LAVFI_INDEV) += fate-filter-fpscap-rate
 fate-filter-fpscap-rate: CMD = probe -v 0 -f lavfi -show_entries stream=r_frame_rate,avg_frame_rate,time_base -of default=nw=1 "testsrc2=s=64x64:r=15:d=1,fpscap=20"; probe -v 0 -f lavfi -show_entries stream=r_frame_rate,avg_frame_rate,time_base -of default=nw=1 "testsrc2=s=64x64:r=25:d=1,fpscap=20"; probe -v 0 -f lavfi -show_entries stream=r_frame_rate,avg_frame_rate,time_base -of default=nw=1 "testsrc2=s=64x64:r=15:d=2,settb=AVTB,setpts=PTS/2,fpscap=20"
+
+FATE_FILTER_FFPROBE-$(call ALLYES, FFPROBE FPSCAP_FILTER TESTSRC2_FILTER SETPTS_FILTER SETTB_FILTER LAVFI_INDEV) += fate-filter-fpscap-unknown-rate
+fate-filter-fpscap-unknown-rate: CMD = probe -v 0 -f lavfi -show_entries stream=r_frame_rate,avg_frame_rate,time_base -of default=nw=1 "testsrc2=s=64x64:r=25:d=0.2,settb=1/1000,setpts=PTS:strip_fps=1,fpscap=20"
 
 DRAWVG_SCRIPT_ALL = $(SRC_PATH)/tests/ref/lavf/drawvg.all
 

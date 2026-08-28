@@ -14659,8 +14659,8 @@ fps=fps=film:round=near
 
 Limit a video stream to a maximum frame rate without duplicating frames or
 changing timestamps. Unlike the @ref{fps} filter, this filter does not produce
-a constant-frame-rate timeline. It uses the actual input PTS spacing to drop
-frames that would exceed the configured maximum.
+a constant-frame-rate timeline. It uses the actual input PTS to pass at most
+one frame in each anchored time slot at the configured rate.
 
 It accepts the following option:
 
@@ -14677,7 +14677,14 @@ first frame in each occupied slot is passed through and subsequent frames in
 that slot are dropped. This is done for every input, including one whose
 nominal frame rate is less than or equal to @var{fps}, because its actual PTS
 spacing may still exceed the limit. The output link reports the lower of the
-nominal input frame rate and @var{fps} as its frame rate.
+nominal input frame rate and @var{fps} as its frame rate. If the nominal input
+frame rate is unavailable, the output link reports @var{fps}; frame selection
+continues to use the actual input PTS.
+
+The anchored-slot rule limits the long-term number of output frames without
+rewriting timestamps. It does not impose a minimum PTS distance between every
+pair of adjacent output frames: frames on opposite sides of a slot boundary
+may be closer than @code{1/fps}.
 
 The filter does not buffer, clone, duplicate, interpolate, or modify frames.
 In particular, frame PTS, duration, and the input time base are preserved.

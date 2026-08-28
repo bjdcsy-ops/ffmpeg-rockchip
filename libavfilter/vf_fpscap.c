@@ -64,13 +64,6 @@ static int config_output_props(AVFilterLink *outlink)
     FilterLink *il = ff_filter_link(inlink);
     FilterLink *ol = ff_filter_link(outlink);
 
-    if (il->frame_rate.num <= 0 || il->frame_rate.den <= 0) {
-        av_log(ctx, AV_LOG_ERROR,
-               "Input frame rate is unknown or invalid; fpscap requires a "
-               "valid nominal input frame rate.\n");
-        return AVERROR(EINVAL);
-    }
-
     if (s->fps.num <= 0 || s->fps.den <= 0) {
         av_log(ctx, AV_LOG_ERROR,
                "Maximum frame rate must be greater than zero.\n");
@@ -85,8 +78,16 @@ static int config_output_props(AVFilterLink *outlink)
     }
 
     outlink->time_base = inlink->time_base;
-    ol->frame_rate = av_cmp_q(il->frame_rate, s->fps) > 0 ?
-                     s->fps : il->frame_rate;
+    if (il->frame_rate.num <= 0 || il->frame_rate.den <= 0) {
+        ol->frame_rate = s->fps;
+        av_log(ctx, AV_LOG_WARNING,
+               "Input frame rate is unknown or invalid; reporting maximum "
+               "frame rate %d/%d on the output link.\n",
+               s->fps.num, s->fps.den);
+    } else {
+        ol->frame_rate = av_cmp_q(il->frame_rate, s->fps) > 0 ?
+                         s->fps : il->frame_rate;
+    }
 
     av_log(ctx, AV_LOG_VERBOSE,
            "input frame rate %d/%d, maximum %d/%d, output frame rate %d/%d\n",
