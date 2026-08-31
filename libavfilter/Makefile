@@ -325,6 +325,7 @@ OBJS-$(CONFIG_FIND_RECT_FILTER)              += vf_find_rect.o lavfutils.o
 OBJS-$(CONFIG_FLOODFILL_FILTER)              += vf_floodfill.o
 OBJS-$(CONFIG_FORMAT_FILTER)                 += vf_format.o
 OBJS-$(CONFIG_FPS_FILTER)                    += vf_fps.o
+OBJS-$(CONFIG_FPSCAP_FILTER)                 += vf_fpscap.o
 OBJS-$(CONFIG_FRAME_DECISION_ROI_FILTER)     += vf_frame_decision_roi.o \
                                                 frame_decision_roi.o \
                                                 frame_decision_roi_adapter.o \

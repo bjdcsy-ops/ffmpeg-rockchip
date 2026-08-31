@@ -488,7 +488,7 @@ package_rockchip_runtime() (
   export LC_ALL=C
 
   local artifact_version
-  local filter_count=9
+  local filter_count=10
   local filter_option_count=0
   local -a glibc_binaries
   local glibc_max_required
@@ -625,6 +625,7 @@ package_rockchip_runtime() (
   required_filters=(
     addroi
     asetpts
+    fpscap
     hwdownload
     hwmap
     hwupload
@@ -635,7 +636,7 @@ package_rockchip_runtime() (
   )
   if [ "$target" = rk3588 ]; then
     required_filters+=(frame_decision_roi)
-    filter_count=10
+    filter_count=11
   fi
   rockchip_verify_component_list \
     "$PACKAGE_DIR/ffmpeg" filters -filters "${required_filters[@]}"
