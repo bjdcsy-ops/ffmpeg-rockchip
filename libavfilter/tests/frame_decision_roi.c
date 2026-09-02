@@ -213,18 +213,87 @@ static int test_deterministic_cap(void)
     return 0;
 }
 
-static int test_ttl(void)
+static int test_result_deadline(void)
 {
-    CHECK(ff_frame_decision_roi_snapshot_is_fresh(1000000, 1499999, 500),
-          "fresh snapshot rejected");
-    CHECK(ff_frame_decision_roi_snapshot_is_fresh(1000000, 1500000, 500),
-          "TTL boundary rejected");
-    CHECK(!ff_frame_decision_roi_snapshot_is_fresh(1000000, 1500001, 500),
-          "expired snapshot accepted");
-    CHECK(!ff_frame_decision_roi_snapshot_is_fresh(1000000, 999999, 500),
+    CHECK(ff_frame_decision_roi_result_is_fresh(1000000, 1499999, 500),
+          "fresh result rejected");
+    CHECK(ff_frame_decision_roi_result_is_fresh(1000000, 1500000, 500),
+          "result deadline boundary rejected");
+    CHECK(!ff_frame_decision_roi_result_is_fresh(1000000, 1500001, 500),
+          "expired result accepted");
+    CHECK(!ff_frame_decision_roi_result_is_fresh(1000000, 999999, 500),
           "backwards monotonic time accepted");
-    CHECK(!ff_frame_decision_roi_snapshot_is_fresh(-1, 1000000, 500),
-          "unset snapshot accepted");
+    CHECK(!ff_frame_decision_roi_result_is_fresh(-1, 1000000, 500),
+          "unset capture time accepted");
+    return 0;
+}
+
+static int test_result_deadline_and_reuse_are_independent(void)
+{
+    const int64_t capture_time_us = 1000000;
+    const int64_t accept_time_us = 1490000;
+    const int64_t output_time_us = 1900000;
+
+    CHECK(ff_frame_decision_roi_result_is_fresh(
+              capture_time_us, accept_time_us, 500),
+          "result inside source deadline was rejected");
+    CHECK(!ff_frame_decision_roi_result_is_fresh(
+               capture_time_us, output_time_us, 500),
+          "output time unexpectedly met the source result deadline");
+    CHECK(ff_frame_decision_roi_snapshot_should_apply(
+              accept_time_us, -1, output_time_us, 300, 500),
+          "accepted ROI was not reused independently of source age");
+    return 0;
+}
+
+static int test_empty_miss_hold(void)
+{
+    CHECK(ff_frame_decision_roi_snapshot_should_apply(
+              1000000, -1, 1100000, 300, 500),
+          "snapshot without an empty result was not applied");
+    CHECK(ff_frame_decision_roi_snapshot_should_apply(
+              1000000, 1100000, 1100000, 300, 500),
+          "first empty result was not held");
+    CHECK(ff_frame_decision_roi_snapshot_should_apply(
+              1000000, 1100000, 1399999, 300, 500),
+          "empty result inside miss window was not held");
+    CHECK(!ff_frame_decision_roi_snapshot_should_apply(
+               1000000, 1100000, 1400000, 300, 500),
+          "empty result at miss-window boundary was held");
+    CHECK(!ff_frame_decision_roi_snapshot_should_apply(
+               1000000, 1100000, 1100000, 0, 500),
+          "disabled miss hold retained an empty result");
+    CHECK(!ff_frame_decision_roi_snapshot_should_apply(
+               1000000, 1200000, 1199999, 300, 500),
+          "backwards result time was held");
+    CHECK(ff_frame_decision_roi_snapshot_should_apply(
+              1000000, 1490000, 1500000, 300, 500),
+          "reuse TTL boundary did not retain ROI after empty result");
+    CHECK(!ff_frame_decision_roi_snapshot_should_apply(
+               1000000, 1490000, 1500001, 300, 500),
+          "miss hold exceeded the reuse TTL hard limit");
+    CHECK(ff_frame_decision_roi_snapshot_should_apply(
+              1000000, -1, 1500000, 300, 500),
+          "reuse TTL boundary did not retain ROI");
+    CHECK(!ff_frame_decision_roi_snapshot_should_apply(
+               1000000, -1, 1500001, 300, 500),
+          "service silence exceeded the reuse TTL");
+    CHECK(!ff_frame_decision_roi_snapshot_should_apply(
+               -1, -1, 1000000, 300, 500),
+          "unset accepted-result time retained ROI");
+    return 0;
+}
+
+static int test_single_empty_expires_without_followup(void)
+{
+    const int64_t snapshot_accept_time_us = 1000000;
+    const int64_t first_empty_result_time_us = 1100000;
+    const int64_t later_output_time_us = 1400000;
+
+    CHECK(!ff_frame_decision_roi_snapshot_should_apply(
+               snapshot_accept_time_us, first_empty_result_time_us,
+               later_output_time_us, 300, 500),
+          "single empty result without follow-up survived miss hold");
     return 0;
 }
 
@@ -294,7 +363,10 @@ int main(void)
     ret |= test_disabled_and_edge_clip();
     ret |= test_exact_target_lookup();
     ret |= test_deterministic_cap();
-    ret |= test_ttl();
+    ret |= test_result_deadline();
+    ret |= test_result_deadline_and_reuse_are_independent();
+    ret |= test_empty_miss_hold();
+    ret |= test_single_empty_expires_without_followup();
     ret |= test_side_data();
     ret |= test_missing_sdk_is_lazy_failure();
     return ret;

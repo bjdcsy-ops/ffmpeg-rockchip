@@ -97,8 +97,25 @@ int ff_frame_decision_roi_normalize(
     const FFFrameDecisionROITargetPolicy *policy,
     int frame_width, int frame_height);
 
-int ff_frame_decision_roi_snapshot_is_fresh(int64_t capture_time_us,
-                                            int64_t now_us, int ttl_ms);
+/**
+ * Return whether a detector result still meets its source-frame deadline.
+ * This gate is evaluated before the result is allowed to refresh ROI state.
+ */
+int ff_frame_decision_roi_result_is_fresh(int64_t capture_time_us,
+                                          int64_t now_us, int ttl_ms);
+
+/**
+ * Return whether an accepted non-empty ROI snapshot should be applied now.
+ * snapshot_accept_time_us is the monotonic time at which FFmpeg accepted the
+ * result.  A negative first_empty_result_time_us means that no successful
+ * empty result has been received.  Otherwise the miss window starts at that
+ * time.  reuse_ttl_ms is the hard upper bound for service silence and is not
+ * refreshed by empty or failed results.
+ */
+int ff_frame_decision_roi_snapshot_should_apply(
+    int64_t snapshot_accept_time_us,
+    int64_t first_empty_result_time_us,
+    int64_t now_us, int miss_hold_ms, int reuse_ttl_ms);
 
 /**
  * Replace AV_FRAME_DATA_REGIONS_OF_INTEREST with the supplied normalized set.

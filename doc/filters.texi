@@ -14754,8 +14754,24 @@ is 100.  If inference is slower than the requested interval, an unsent sample
 is replaced by the newest frame.
 
 @item ttl_ms
-Maximum ROI age measured from capture of the submitted source frame.  The
-default is 500 milliseconds.  Expired results are not attached.
+Maximum detector result age measured from capture of the submitted source
+frame.  The default is 500 milliseconds.  This value is sent to the detector
+as the request deadline and is checked again before a result may refresh ROI
+state.  It does not control how long an already accepted ROI set is reused.
+
+@item reuse_ttl_ms
+Maximum time to reuse the most recent accepted non-empty ROI set, measured
+from receipt of that result.  The default is 1000 milliseconds.  Empty,
+expired, failed, or missing results do not refresh this window.  This separate
+window lets a fresh result bridge the normal interval between multi-channel
+inference completions without accepting an old source-frame result.
+
+@item miss_hold_ms
+Maximum time to retain the last non-empty ROI set after the first successful
+empty detector result.  The default is 600 milliseconds.  This window does
+not refresh the retained set's receipt time and remains capped by
+@option{reuse_ttl_ms}.  Set this option to zero to clear ROI immediately on an
+empty result.
 
 @item connect_timeout_ms
 Detector connection timeout in milliseconds.  The default is 1000.

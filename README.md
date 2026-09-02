@@ -85,11 +85,18 @@ The frame-decision client library defaults to
 service socket defaults to `/run/frame-decision/frame-decision-v3.sock`. The
 filter maps generic model targets to independent weights through
 `target_qoffsets`, caps the normalized set at eight non-overlapping regions,
-and clears expired results according to `ttl_ms`. Only non-zero targets are
-enabled on the detector connection, allowing frame-decision to skip unrelated
-models. Set `debug_overlay=1` only during development to draw the selected
-rectangles into a separate RGA output frame. See the `frame_decision_roi`
-filter documentation for all options and input layout requirements.
+and rejects detector results that miss the source-frame deadline configured by
+`ttl_ms` (500 ms by default). Only non-zero targets are enabled on the detector
+connection, allowing frame-decision to skip unrelated models. A fresh accepted
+non-empty result may be reused for `reuse_ttl_ms` (1000 ms by default), measured
+from result receipt, so multi-channel inference cadence does not create gaps in
+the encoder ROI state. A successful empty detection clears that state after
+`miss_hold_ms` (600 ms by default), without refreshing the reuse window; set
+`miss_hold_ms=0` to clear immediately. Failed, expired, or missing results also
+do not refresh it. Set `debug_overlay=1` only during development to draw the
+same selected rectangles into a separate RGA output frame. See the
+`frame_decision_roi` filter documentation for all options and input layout
+requirements.
 
 ROI metadata follows the asynchronous RKMPP frame queue, so a new detection can
 become visible after frames already queued for encoding. The target policy is

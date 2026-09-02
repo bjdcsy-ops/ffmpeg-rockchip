@@ -71,6 +71,8 @@ typedef struct FrameDecisionROIContext {
     int channel_id;
     int sample_interval_ms;
     int ttl_ms;
+    int reuse_ttl_ms;
+    int miss_hold_ms;
     int connect_timeout_ms;
     int io_timeout_ms;
     char *target_qoffsets;
@@ -96,7 +98,8 @@ typedef struct FrameDecisionROIContext {
 
     AVRegionOfInterest latest[FF_FRAME_DECISION_ROI_MAX_REGIONS];
     int nb_latest;
-    int64_t latest_capture_time_us;
+    int64_t latest_result_time_us;
+    int64_t first_empty_result_time_us;
     uint64_t latest_sequence;
 
     uint64_t next_request_id;
@@ -450,8 +453,8 @@ static void publish_result(AVFilterContext *avctx,
         result->nb_detections > FF_FRAME_DECISION_ROI_MAX_DETECTIONS)
         return;
 
-    if (!ff_frame_decision_roi_snapshot_is_fresh(job->capture_time_us,
-                                                  now_us, s->ttl_ms))
+    if (!ff_frame_decision_roi_result_is_fresh(job->capture_time_us,
+                                                now_us, s->ttl_ms))
         return;
 
     nb_normalized = ff_frame_decision_roi_normalize(
@@ -465,10 +468,27 @@ static void publish_result(AVFilterContext *avctx,
 
     pthread_mutex_lock(&s->lock);
     if (!s->stop && job->frame_sequence >= s->latest_sequence) {
-        memcpy(s->latest, normalized,
-               (size_t)nb_normalized * sizeof(normalized[0]));
-        s->nb_latest = nb_normalized;
-        s->latest_capture_time_us = job->capture_time_us;
+        if (nb_normalized > 0) {
+            memcpy(s->latest, normalized,
+                   (size_t)nb_normalized * sizeof(normalized[0]));
+            s->nb_latest = nb_normalized;
+            s->latest_result_time_us = now_us;
+            s->first_empty_result_time_us = -1;
+        } else if (s->nb_latest > 0) {
+            if (s->first_empty_result_time_us < 0)
+                s->first_empty_result_time_us = now_us;
+            if (!ff_frame_decision_roi_snapshot_should_apply(
+                    s->latest_result_time_us,
+                    s->first_empty_result_time_us,
+                    now_us, s->miss_hold_ms, s->reuse_ttl_ms)) {
+                s->nb_latest = 0;
+                s->latest_result_time_us = -1;
+                s->first_empty_result_time_us = -1;
+            }
+        } else {
+            s->latest_result_time_us = -1;
+            s->first_empty_result_time_us = -1;
+        }
         s->latest_sequence = job->frame_sequence;
     }
     pthread_mutex_unlock(&s->lock);
@@ -617,8 +637,10 @@ static int frame_decision_roi_filter_frame(AVFilterLink *inlink,
 
     if (s->detector_enabled) {
         pthread_mutex_lock(&s->lock);
-        if (ff_frame_decision_roi_snapshot_is_fresh(
-                s->latest_capture_time_us, now_us, s->ttl_ms)) {
+        if (ff_frame_decision_roi_snapshot_should_apply(
+                s->latest_result_time_us,
+                s->first_empty_result_time_us,
+                now_us, s->miss_hold_ms, s->reuse_ttl_ms)) {
             nb_snapshot = s->nb_latest;
             memcpy(snapshot, s->latest,
                    (size_t)nb_snapshot * sizeof(snapshot[0]));
@@ -707,7 +729,8 @@ static av_cold int frame_decision_roi_init(AVFilterContext *avctx)
         return AVERROR(ret);
     }
     s->sync_initialized = 1;
-    s->latest_capture_time_us = -1;
+    s->latest_result_time_us = -1;
+    s->first_empty_result_time_us = -1;
     s->next_request_id = 1;
     s->next_frame_sequence = 1;
 
@@ -842,9 +865,16 @@ static const AVOption frame_decision_roi_options[] = {
     { "sample_interval_ms", "minimum interval between detector submissions",
       OFFSET(sample_interval_ms), AV_OPT_TYPE_INT,
       { .i64 = 100 }, 1, 60000, FLAGS },
-    { "ttl_ms", "ROI lifetime measured from source-frame capture",
+    { "ttl_ms", "detector result deadline measured from source-frame capture",
       OFFSET(ttl_ms), AV_OPT_TYPE_INT,
       { .i64 = 500 }, 1, 600000, FLAGS },
+    { "reuse_ttl_ms", "accepted ROI reuse lifetime measured from result receipt",
+      OFFSET(reuse_ttl_ms), AV_OPT_TYPE_INT,
+      { .i64 = 1000 }, 1, 600000, FLAGS },
+    { "miss_hold_ms", "retain ROI after empty results, capped by reuse_ttl_ms; "
+                      "zero clears immediately",
+      OFFSET(miss_hold_ms), AV_OPT_TYPE_INT,
+      { .i64 = 600 }, 0, 600000, FLAGS },
     { "connect_timeout_ms", "frame-decision connection timeout",
       OFFSET(connect_timeout_ms), AV_OPT_TYPE_INT,
       { .i64 = 1000 }, 1, 600000, FLAGS },

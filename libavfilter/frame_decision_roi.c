@@ -400,13 +400,36 @@ int ff_frame_decision_roi_normalize(
     return nb_candidates;
 }
 
-int ff_frame_decision_roi_snapshot_is_fresh(int64_t capture_time_us,
-                                            int64_t now_us, int ttl_ms)
+static int timestamp_is_fresh(int64_t timestamp_us, int64_t now_us,
+                              int lifetime_ms)
 {
-    if (capture_time_us < 0 || now_us < capture_time_us || ttl_ms <= 0)
+    if (timestamp_us < 0 || now_us < timestamp_us || lifetime_ms <= 0)
         return 0;
 
-    return now_us - capture_time_us <= (int64_t)ttl_ms * 1000;
+    return now_us - timestamp_us <= (int64_t)lifetime_ms * 1000;
+}
+
+int ff_frame_decision_roi_result_is_fresh(int64_t capture_time_us,
+                                          int64_t now_us, int ttl_ms)
+{
+    return timestamp_is_fresh(capture_time_us, now_us, ttl_ms);
+}
+
+int ff_frame_decision_roi_snapshot_should_apply(
+    int64_t snapshot_accept_time_us,
+    int64_t first_empty_result_time_us,
+    int64_t now_us, int miss_hold_ms, int reuse_ttl_ms)
+{
+    if (!timestamp_is_fresh(snapshot_accept_time_us, now_us,
+                            reuse_ttl_ms))
+        return 0;
+    if (first_empty_result_time_us < 0)
+        return 1;
+    if (now_us < first_empty_result_time_us || miss_hold_ms <= 0)
+        return 0;
+
+    return now_us - first_empty_result_time_us <
+           (int64_t)miss_hold_ms * 1000;
 }
 
 int ff_frame_decision_roi_attach(

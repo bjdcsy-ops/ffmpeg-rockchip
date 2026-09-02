@@ -667,6 +667,8 @@ package_rockchip_runtime() (
       channel_id \
       sample_interval_ms \
       ttl_ms \
+      reuse_ttl_ms \
+      miss_hold_ms \
       connect_timeout_ms \
       io_timeout_ms \
       target_qoffsets \
