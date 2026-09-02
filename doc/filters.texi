@@ -14721,8 +14721,11 @@ Detection runs asynchronously.  The media thread submits sampled DMA-BUF
 frames to a worker without waiting for inference, and applies the newest
 result which is still inside its configured lifetime.  A result therefore
 describes recent detector state; it is not bound to the exact output frame
-which receives the ROI metadata.  If the detector is unavailable, encoding
-continues without fresh ROI metadata.
+which receives the ROI metadata.  After the filter has initialized, encoding
+continues without fresh ROI metadata while the detector daemon or service is
+unavailable.  The configured client shared library and its required ABI
+symbols must be present during filter initialization; a missing or
+incompatible library causes filter graph configuration to fail.
 
 The input must use @code{AV_PIX_FMT_DRM_PRIME} with one linear
 @code{DRM_FORMAT_NV12} object.  AFBC, P010, and other layouts are rejected.
@@ -14735,7 +14738,7 @@ The filter accepts the following options:
 @table @option
 @item sdk_library
 Path to the frame-decision client shared library.  The default is
-@file{/opt/frame-decision-service/lib/libframe_decision_client.so.1}.
+@file{/opt/frame-decision-service/lib/libframe_decision_client.so.2}.
 
 @item socket
 Path to the frame-decision V3 Unix socket.  The default is
@@ -14743,7 +14746,7 @@ Path to the frame-decision V3 Unix socket.  The default is
 
 @item channel_id
 Logical detector channel in the range 0 to 15.  It is required when any
-category has a non-zero quantisation offset.
+target has a non-zero quantisation offset.
 
 @item sample_interval_ms
 Minimum interval between detector submissions in milliseconds.  The default
@@ -14760,20 +14763,20 @@ Detector connection timeout in milliseconds.  The default is 1000.
 @item io_timeout_ms
 Detector I/O timeout in milliseconds.  The default is 5000.
 
-@item person_qoffset
-Quantisation offset for person detections.
+@item target_qoffsets
+A @code{|}-separated list of @code{target_id=qoffset} mappings.  Target IDs
+use lowercase letters, digits, dot, underscore, and hyphen, are at most 31
+characters long, and must be unique.  At most 16 mappings may be supplied.
+Offsets are integer or @code{num/den} rationals in the range -1 to +1.  As
+with @ref{addroi}, a negative value requests better quality and a positive
+value requests worse quality.  Zero disables that target.  An empty list, or
+a list containing only zero offsets, disables detector submission and
+preserves existing ROI side data.
 
-@item motor_vehicle_qoffset
-Quantisation offset for motor-vehicle detections.
-
-@item non_motor_vehicle_qoffset
-Quantisation offset for non-motor-vehicle detections.
-
-Each category offset is a rational in the range -1 to +1.  As with
-@ref{addroi}, a negative value requests better quality and a positive value
-requests worse quality.  Zero disables the category.  When all three values
-are zero, detector submission is disabled and existing ROI side data is
-preserved.
+Only targets with non-zero offsets are configured on the frame-decision V3
+connection.  The service can therefore skip models which cannot produce any
+selected target.  Unknown, duplicate, malformed, or unsupported target
+configurations fail closed instead of falling back to all models.
 
 @item debug_overlay
 If enabled, copy the frame through RGA and draw bright green borders around
@@ -14788,13 +14791,15 @@ The default is 4.
 
 @subsection Example
 
-Decode an H.264 RTSP stream to linear NV12, resize it, protect people, and
-encode it with Rockchip MPP:
+Decode an H.264 RTSP stream to linear NV12, resize it, protect face/head and
+motor-vehicle targets with different weights, and encode it with Rockchip
+MPP:
 
 @example
 ffmpeg -rtsp_transport tcp -c:v h264_rkmpp -afbc 0 -i input \
   -vf "scale_rkrga=w=1920:h=1080:format=nv12:afbc=0,\
-frame_decision_roi=channel_id=0:person_qoffset=-3/20" \
+frame_decision_roi=channel_id=0:\
+target_qoffsets=face_head=-3/20|motor_vehicle=-1/10" \
   -c:v h264_rkmpp -b:v 4M -an output
 @end example
 

@@ -28,54 +28,88 @@
     }                                                                   \
 } while (0)
 
-static FFFrameDecisionROIWeights test_weights(void)
+static FFFrameDecisionROITargetPolicy test_policy(void)
 {
-    FFFrameDecisionROIWeights weights = { 0 };
-
-    weights.qoffset[FF_FRAME_DECISION_ROI_CATEGORY_NONE] =
-        (AVRational) { 0, 1 };
-    weights.qoffset[FF_FRAME_DECISION_ROI_CATEGORY_PERSON] =
-        (AVRational) { -3, 20 };
-    weights.qoffset[FF_FRAME_DECISION_ROI_CATEGORY_MOTOR_VEHICLE] =
-        (AVRational) { -1, 4 };
-    weights.qoffset[FF_FRAME_DECISION_ROI_CATEGORY_NON_MOTOR_VEHICLE] =
-        (AVRational) { 1, 5 };
-    return weights;
+    return (FFFrameDecisionROITargetPolicy) {
+        .targets = {
+            { "face_head",         { -3, 20 } },
+            { "motor_vehicle",     { -1,  4 } },
+            { "non_motor_vehicle", {  1,  5 } },
+        },
+        .nb_targets = 3,
+    };
 }
 
-static int test_weight_validation(void)
+static int test_policy_parsing_and_validation(void)
 {
-    FFFrameDecisionROIWeights weights = test_weights();
+    const char *invalid[] = {
+        "face_head", "=1/2", "face_head=", "face_head=1/0",
+        "face_head=2/1", "Face=-1/2", "face head=-1/2",
+        "face_head=-1/2|", "|face_head=-1/2",
+        "face_head=-1/2||motor_vehicle=-1/3",
+        "face_head=-1/2|face_head=-1/3",
+        "abcdefghijklmnopqrstuvwxyzabcdef=-1/2",
+        "face_head=1/2/3", "face_head=0.5",
+        "face_head= 1/2", "face_head=1/2 ",
+    };
+    FFFrameDecisionROITargetPolicy policy;
+    FFFrameDecisionROITargetPolicy invalid_policy = test_policy();
+    size_t i;
 
-    CHECK(ff_frame_decision_roi_validate_weights(&weights) == 0,
-          "valid weights rejected");
-    weights.qoffset[FF_FRAME_DECISION_ROI_CATEGORY_PERSON] =
-        (AVRational) { 1, 0 };
-    CHECK(ff_frame_decision_roi_validate_weights(&weights) < 0,
-          "zero denominator accepted");
-    weights = test_weights();
-    weights.qoffset[FF_FRAME_DECISION_ROI_CATEGORY_PERSON] =
-        (AVRational) { 21, 20 };
-    CHECK(ff_frame_decision_roi_validate_weights(&weights) < 0,
-          "out-of-range weight accepted");
+    CHECK(ff_frame_decision_roi_parse_target_qoffsets(
+              &policy,
+              "face_head=-1/17|motor_vehicle=-1/10|"
+              "non_motor_vehicle=0") == 0,
+          "valid target policy rejected");
+    CHECK(policy.nb_targets == 3,
+          "valid target count differs");
+    CHECK(!strcmp(policy.targets[0].target_id, "face_head") &&
+          av_cmp_q(policy.targets[0].qoffset,
+                   (AVRational) { -1, 17 }) == 0,
+          "face_head mapping differs");
+    CHECK(ff_frame_decision_roi_target_is_enabled(&policy, "face_head"),
+          "non-zero target was not enabled");
+    CHECK(!ff_frame_decision_roi_target_is_enabled(
+              &policy, "non_motor_vehicle"),
+          "zero target was enabled");
+    CHECK(!ff_frame_decision_roi_target_is_enabled(&policy, "unknown"),
+          "unknown target was enabled");
+
+    CHECK(ff_frame_decision_roi_parse_target_qoffsets(&policy, "") == 0 &&
+          policy.nb_targets == 0,
+          "empty policy did not disable detection");
+    for (i = 0; i < FF_ARRAY_ELEMS(invalid); i++)
+        CHECK(ff_frame_decision_roi_parse_target_qoffsets(
+                  &policy, invalid[i]) < 0,
+              "invalid target policy accepted");
+
+    CHECK(ff_frame_decision_roi_parse_target_qoffsets(
+              &policy,
+              "a=0|b=0|c=0|d=0|e=0|f=0|g=0|h=0|i=0|j=0|k=0|"
+              "l=0|m=0|n=0|o=0|p=0|q=0") == AVERROR(E2BIG),
+          "more than sixteen targets accepted");
+
+    invalid_policy.targets[0].qoffset = (AVRational) { 1, 0 };
+    CHECK(ff_frame_decision_roi_validate_target_policy(&invalid_policy) < 0,
+          "zero denominator accepted by validator");
     return 0;
 }
 
 static int test_normalize_and_merge(void)
 {
-    const FFFrameDecisionROIWeights weights = test_weights();
+    const FFFrameDecisionROITargetPolicy policy = test_policy();
     const FFFrameDecisionROIDetection detections[] = {
-        { FF_FRAME_DECISION_ROI_CATEGORY_PERSON,            0.90,
+        { "face_head",                                      0.90,
           17, 17, 31, 31 },
-        { FF_FRAME_DECISION_ROI_CATEGORY_MOTOR_VEHICLE,      0.80,
+        { "motor_vehicle",                                  0.80,
           24, 16, 47, 31 },
-        { FF_FRAME_DECISION_ROI_CATEGORY_NON_MOTOR_VEHICLE,  0.95,
+        { "non_motor_vehicle",                              0.95,
           100, 100, 117, 117 },
-        { 99,                                                 0.90,
+        { "bird",                                           0.90,
           0, 0, 16, 16 },
-        { FF_FRAME_DECISION_ROI_CATEGORY_PERSON,               NAN,
+        { "face_head",                                       NAN,
           0, 0, 16, 16 },
-        { FF_FRAME_DECISION_ROI_CATEGORY_PERSON,              0.50,
+        { "face_head",                                      0.50,
           300, 300, 320, 320 },
     };
     AVRegionOfInterest regions[FF_FRAME_DECISION_ROI_MAX_REGIONS];
@@ -84,7 +118,7 @@ static int test_normalize_and_merge(void)
 
     count = ff_frame_decision_roi_normalize(
         regions, &stats, detections, FF_ARRAY_ELEMS(detections),
-        &weights, 192, 128);
+        &policy, 192, 128);
     CHECK(count == 2, "unexpected normalized region count");
     CHECK(stats.merged == 1, "overlap was not merged");
     CHECK(stats.rejected == 3, "invalid detections not rejected");
@@ -104,22 +138,21 @@ static int test_normalize_and_merge(void)
 
 static int test_disabled_and_edge_clip(void)
 {
-    FFFrameDecisionROIWeights weights = test_weights();
+    FFFrameDecisionROITargetPolicy policy = test_policy();
     const FFFrameDecisionROIDetection detections[] = {
-        { FF_FRAME_DECISION_ROI_CATEGORY_PERSON,       0.8,
+        { "face_head",                                  0.8,
           -20, -4, 17, 18 },
-        { FF_FRAME_DECISION_ROI_CATEGORY_MOTOR_VEHICLE, 0.9,
+        { "motor_vehicle",                              0.9,
           95, 95, 120, 130 },
     };
     AVRegionOfInterest regions[FF_FRAME_DECISION_ROI_MAX_REGIONS];
     FFFrameDecisionROINormalizeStats stats;
     int count;
 
-    weights.qoffset[FF_FRAME_DECISION_ROI_CATEGORY_PERSON] =
-        (AVRational) { 0, 1 };
+    policy.targets[0].qoffset = (AVRational) { 0, 1 };
     count = ff_frame_decision_roi_normalize(
         regions, &stats, detections, FF_ARRAY_ELEMS(detections),
-        &weights, 100, 100);
+        &policy, 100, 100);
     CHECK(count == 1, "disabled category was not removed");
     CHECK(stats.disabled == 1, "disabled category not counted");
     CHECK(regions[0].left == 80 && regions[0].top == 80 &&
@@ -128,29 +161,50 @@ static int test_disabled_and_edge_clip(void)
     return 0;
 }
 
+static int test_exact_target_lookup(void)
+{
+    FFFrameDecisionROITargetPolicy policy;
+    const FFFrameDecisionROIDetection detection = {
+        "face_head", 0.75, 16, 16, 32, 32,
+    };
+    AVRegionOfInterest region;
+    int count;
+
+    CHECK(ff_frame_decision_roi_parse_target_qoffsets(
+              &policy, "face=-1/20|face_head=-1/2") == 0,
+          "prefix target policy rejected");
+    count = ff_frame_decision_roi_normalize(
+        &region, NULL, &detection, 1, &policy, 64, 64);
+    CHECK(count == 1, "exact target was not normalized");
+    CHECK(av_cmp_q(region.qoffset, (AVRational) { -1, 2 }) == 0,
+          "target lookup matched a prefix instead of the exact ID");
+    return 0;
+}
+
 static int test_deterministic_cap(void)
 {
-    const FFFrameDecisionROIWeights weights = test_weights();
+    const FFFrameDecisionROITargetPolicy policy = test_policy();
     FFFrameDecisionROIDetection detections[10];
     AVRegionOfInterest regions[FF_FRAME_DECISION_ROI_MAX_REGIONS];
     FFFrameDecisionROINormalizeStats stats;
     int count;
-    int i;
+    size_t i;
 
     for (i = 0; i < FF_ARRAY_ELEMS(detections); i++) {
         detections[i] = (FFFrameDecisionROIDetection) {
-            .category = FF_FRAME_DECISION_ROI_CATEGORY_PERSON,
             .score    = (i + 1) / 10.0,
             .left     = i * 32,
             .top      = 0,
             .right    = i * 32 + 16,
             .bottom   = 16,
         };
+        snprintf(detections[i].target_id,
+                 sizeof(detections[i].target_id), "face_head");
     }
 
     count = ff_frame_decision_roi_normalize(
         regions, &stats, detections, FF_ARRAY_ELEMS(detections),
-        &weights, 352, 64);
+        &policy, 352, 64);
     CHECK(count == FF_FRAME_DECISION_ROI_MAX_REGIONS,
           "more than eight regions returned");
     CHECK(stats.truncated == 2, "truncation count differs");
@@ -213,10 +267,12 @@ static int test_side_data(void)
 
 static int test_missing_sdk_is_lazy_failure(void)
 {
+    const FFFrameDecisionROITargetPolicy policy = test_policy();
     FFFrameDecisionROIAdapterConfig config = {
-        .sdk_library       = "/definitely/missing/libframe_decision.so.1",
+        .sdk_library       = "/definitely/missing/libframe_decision.so.2",
         .socket_path       = "/tmp/frame-decision-test.sock",
         .channel_id        = 0,
+        .target_policy     = &policy,
         .connect_timeout_ms = 1,
         .io_timeout_ms      = 1,
     };
@@ -233,9 +289,10 @@ int main(void)
 {
     int ret = 0;
 
-    ret |= test_weight_validation();
+    ret |= test_policy_parsing_and_validation();
     ret |= test_normalize_and_merge();
     ret |= test_disabled_and_edge_clip();
+    ret |= test_exact_target_lookup();
     ret |= test_deterministic_cap();
     ret |= test_ttl();
     ret |= test_side_data();

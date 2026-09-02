@@ -19,6 +19,7 @@
  */
 
 #include <errno.h>
+#include <limits.h>
 #include <math.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,21 +42,190 @@ static int qoffset_is_valid(AVRational qoffset)
            av_cmp_q(qoffset, (AVRational) {  1, 1 }) <= 0;
 }
 
-int ff_frame_decision_roi_validate_weights(
-    const FFFrameDecisionROIWeights *weights)
+static int target_id_is_valid(const char *target_id)
 {
-    int i;
+    const char *terminator;
+    size_t i;
+    size_t length;
 
-    if (!weights)
+    if (!target_id)
+        return 0;
+    terminator = memchr(target_id, '\0',
+                        FF_FRAME_DECISION_ROI_TARGET_ID_SIZE);
+    if (!terminator)
+        return 0;
+    length = terminator - target_id;
+    if (!length ||
+        !((target_id[0] >= 'a' && target_id[0] <= 'z') ||
+          (target_id[0] >= '0' && target_id[0] <= '9')))
+        return 0;
+
+    for (i = 1; i < length; i++) {
+        const unsigned char c = target_id[i];
+
+        if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') ||
+              c == '.' || c == '_' || c == '-'))
+            return 0;
+    }
+    return 1;
+}
+
+static int parse_integer(const char *text, size_t length, int allow_sign,
+                         int *value)
+{
+    char number[32];
+    char *end;
+    long parsed;
+    size_t i = 0;
+
+    if (!text || !length || length >= sizeof(number) || !value)
+        return AVERROR(EINVAL);
+    memcpy(number, text, length);
+    number[length] = '\0';
+    if (number[0] == '-' || number[0] == '+') {
+        if (!allow_sign || length == 1)
+            return AVERROR(EINVAL);
+        i++;
+    }
+    for (; i < length; i++) {
+        if (number[i] < '0' || number[i] > '9')
+            return AVERROR(EINVAL);
+    }
+    errno = 0;
+    end = NULL;
+    parsed = strtol(number, &end, 10);
+    if (errno || end != number + length || parsed < INT_MIN ||
+        parsed > INT_MAX)
+        return AVERROR(EINVAL);
+    *value = parsed;
+    return 0;
+}
+
+static int parse_qoffset(const char *text, size_t length,
+                         AVRational *qoffset)
+{
+    const char *slash;
+    int numerator;
+    int denominator = 1;
+    int ret;
+
+    if (!text || !length || !qoffset)
+        return AVERROR(EINVAL);
+    slash = memchr(text, '/', length);
+    if (slash && memchr(slash + 1, '/', text + length - slash - 1))
         return AVERROR(EINVAL);
 
-    for (i = FF_FRAME_DECISION_ROI_CATEGORY_PERSON;
-         i < FF_FRAME_DECISION_ROI_CATEGORY_NB; i++) {
-        if (!qoffset_is_valid(weights->qoffset[i]))
+    ret = parse_integer(text, slash ? (size_t)(slash - text) : length,
+                        1, &numerator);
+    if (ret < 0)
+        return ret;
+    if (slash) {
+        ret = parse_integer(slash + 1, text + length - slash - 1,
+                            0, &denominator);
+        if (ret < 0 || denominator <= 0)
             return AVERROR(EINVAL);
     }
 
+    *qoffset = (AVRational) { numerator, denominator };
+    if (!qoffset_is_valid(*qoffset))
+        return AVERROR(EINVAL);
+    if (!numerator)
+        *qoffset = (AVRational) { 0, 1 };
     return 0;
+}
+
+int ff_frame_decision_roi_validate_target_policy(
+    const FFFrameDecisionROITargetPolicy *policy)
+{
+    int i;
+    int j;
+
+    if (!policy || policy->nb_targets < 0 ||
+        policy->nb_targets > FF_FRAME_DECISION_ROI_MAX_TARGETS)
+        return AVERROR(EINVAL);
+
+    for (i = 0; i < policy->nb_targets; i++) {
+        if (!target_id_is_valid(policy->targets[i].target_id) ||
+            !qoffset_is_valid(policy->targets[i].qoffset))
+            return AVERROR(EINVAL);
+        for (j = 0; j < i; j++) {
+            if (!strcmp(policy->targets[i].target_id,
+                        policy->targets[j].target_id))
+                return AVERROR(EINVAL);
+        }
+    }
+
+    return 0;
+}
+
+int ff_frame_decision_roi_parse_target_qoffsets(
+    FFFrameDecisionROITargetPolicy *policy, const char *spec)
+{
+    const char *item;
+
+    if (!policy)
+        return AVERROR(EINVAL);
+    memset(policy, 0, sizeof(*policy));
+    if (!spec || !spec[0])
+        return 0;
+
+    item = spec;
+    for (;;) {
+        const char *separator = strchr(item, '|');
+        const char *end = separator ? separator : item + strlen(item);
+        const char *equals = memchr(item, '=', end - item);
+        FFFrameDecisionROITarget *target;
+        size_t target_length;
+        int ret;
+
+        if (end == item || !equals || equals == item || equals + 1 == end ||
+            memchr(equals + 1, '=', end - equals - 1))
+            return AVERROR(EINVAL);
+        if (policy->nb_targets >= FF_FRAME_DECISION_ROI_MAX_TARGETS)
+            return AVERROR(E2BIG);
+
+        target = &policy->targets[policy->nb_targets];
+        target_length = equals - item;
+        if (target_length >= sizeof(target->target_id))
+            return AVERROR(EINVAL);
+        memcpy(target->target_id, item, target_length);
+        target->target_id[target_length] = '\0';
+        if (!target_id_is_valid(target->target_id))
+            return AVERROR(EINVAL);
+        ret = parse_qoffset(equals + 1, end - equals - 1,
+                            &target->qoffset);
+        if (ret < 0)
+            return ret;
+        policy->nb_targets++;
+
+        if (!separator)
+            break;
+        item = separator + 1;
+    }
+
+    return ff_frame_decision_roi_validate_target_policy(policy);
+}
+
+static const AVRational *target_qoffset(
+    const FFFrameDecisionROITargetPolicy *policy, const char *target_id)
+{
+    int i;
+
+    if (!policy || !target_id_is_valid(target_id))
+        return NULL;
+    for (i = 0; i < policy->nb_targets; i++) {
+        if (!strcmp(policy->targets[i].target_id, target_id))
+            return &policy->targets[i].qoffset;
+    }
+    return NULL;
+}
+
+int ff_frame_decision_roi_target_is_enabled(
+    const FFFrameDecisionROITargetPolicy *policy, const char *target_id)
+{
+    const AVRational *qoffset = target_qoffset(policy, target_id);
+
+    return qoffset && qoffset->num;
 }
 
 static int regions_overlap(const AVRegionOfInterest *a,
@@ -109,7 +279,7 @@ int ff_frame_decision_roi_normalize(
     AVRegionOfInterest *regions,
     FFFrameDecisionROINormalizeStats *stats,
     const FFFrameDecisionROIDetection *detections, int nb_detections,
-    const FFFrameDecisionROIWeights *weights,
+    const FFFrameDecisionROITargetPolicy *policy,
     int frame_width, int frame_height)
 {
     NormalizedCandidate candidates[FF_FRAME_DECISION_ROI_MAX_DETECTIONS];
@@ -119,11 +289,11 @@ int ff_frame_decision_roi_normalize(
     int i;
     int j;
 
-    if (!regions || !weights || nb_detections < 0 ||
+    if (!regions || !policy || nb_detections < 0 ||
         (nb_detections && !detections) ||
         frame_width <= 0 || frame_height <= 0)
         return AVERROR(EINVAL);
-    if (ff_frame_decision_roi_validate_weights(weights) < 0)
+    if (ff_frame_decision_roi_validate_target_policy(policy) < 0)
         return AVERROR(EINVAL);
 
     nb_input = nb_detections;
@@ -135,24 +305,19 @@ int ff_frame_decision_roi_normalize(
 
     for (i = 0; i < nb_input; i++) {
         const FFFrameDecisionROIDetection *src = &detections[i];
-        const AVRational qoffset =
-            src->category > FF_FRAME_DECISION_ROI_CATEGORY_NONE &&
-            src->category < FF_FRAME_DECISION_ROI_CATEGORY_NB
-                ? weights->qoffset[src->category]
-                : (AVRational) { 0, 0 };
+        const AVRational *qoffset = target_qoffset(policy, src->target_id);
         int64_t left;
         int64_t top;
         int64_t right;
         int64_t bottom;
 
-        if (src->category <= FF_FRAME_DECISION_ROI_CATEGORY_NONE ||
-            src->category >= FF_FRAME_DECISION_ROI_CATEGORY_NB ||
+        if (!target_id_is_valid(src->target_id) || !qoffset ||
             !isfinite(src->score) || src->score < 0.0 || src->score > 1.0 ||
             src->right <= src->left || src->bottom <= src->top) {
             local_stats.rejected++;
             continue;
         }
-        if (!qoffset.num) {
+        if (!qoffset->num) {
             local_stats.disabled++;
             continue;
         }
@@ -173,9 +338,9 @@ int ff_frame_decision_roi_normalize(
                 .top       = align_down(top),
                 .right     = align_up_clipped(right, frame_width),
                 .bottom    = align_up_clipped(bottom, frame_height),
-                .qoffset   = qoffset,
+                .qoffset   = *qoffset,
             },
-            .priority = src->score * fabs(av_q2d(qoffset)),
+            .priority = src->score * fabs(av_q2d(*qoffset)),
             .order    = i,
         };
         nb_candidates++;

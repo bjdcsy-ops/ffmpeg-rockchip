@@ -10,7 +10,7 @@
 extern "C" {
 #endif
 
-#define FD_V3_CLIENT_ABI_VERSION 1u
+#define FD_V3_CLIENT_ABI_VERSION 2u
 #define FD_V3_DEFAULT_SOCKET_PATH \
     "/run/frame-decision/frame-decision-v3.sock"
 
@@ -75,9 +75,22 @@ int fd_v3_client_create(const fd_v3_client_config_t *config,
                         char *error, size_t error_size);
 
 /*
+ * Configures the immutable target policy replayed after every HELLO_ACK.
+ * Call this once after create and before the first connect. IDs must match
+ * [a-z0-9][a-z0-9._-]{0,30}; unknown IDs are rejected by the daemon.
+ */
+int fd_v3_client_set_targets(fd_v3_client_t *client, uint32_t channel_id,
+                             const char *const *target_ids,
+                             uint32_t target_count);
+
+/*
  * Except for interrupt, all client operations are serialized on one filter
  * I/O worker and never called from the media thread. Concurrent submit calls
  * are rejected. epoch_changed is set after reconnect to a new daemon epoch.
+ * Target replay failure does not fail connect: the HELLO-established socket
+ * and epoch remain usable so QUERY_INPUT can safely resolve an input made
+ * uncertain by the preceding connection. A subsequent targeted submit
+ * returns the replay error and never falls back to the legacy submit type.
  */
 int fd_v3_client_connect(fd_v3_client_t *client, uint64_t *server_epoch,
                          int *epoch_changed);

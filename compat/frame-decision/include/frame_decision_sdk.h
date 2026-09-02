@@ -8,12 +8,13 @@
 extern "C" {
 #endif
 
-#define FD_ABI_VERSION 2u
+#define FD_ABI_VERSION 3u
 #define FD_CLIENT_ABI_VERSION 1u
 #define FD_DEFAULT_SOCKET_PATH "/run/frame-decision/frame-decision.sock"
 #define FD_SOCKET_PATH_SIZE 108
 #define FD_MAX_CLASSES 128
 #define FD_CLASS_NAME_SIZE 64
+#define FD_TARGET_ID_SIZE 32
 #define FD_LABEL_DISPLAY_NAME_SIZE 64
 #define FD_PATH_SIZE 512
 #define FD_DEFAULT_LABEL_POLICY_PATH \
@@ -71,6 +72,8 @@ typedef struct {
     char model_path[FD_PATH_SIZE];
     char class_names[FD_MAX_CLASSES][FD_CLASS_NAME_SIZE];
     fd_category_t category_by_class[FD_MAX_CLASSES];
+    char target_ids_by_class[FD_MAX_CLASSES][FD_TARGET_ID_SIZE];
+    uint8_t emit_by_class[FD_MAX_CLASSES];
     uint32_t class_count;
     char decoder[32];
     float confidence_threshold;
@@ -114,6 +117,7 @@ typedef struct {
     int32_t class_id;
     char class_name[FD_CLASS_NAME_SIZE];
     fd_category_t category;
+    char target_id[FD_TARGET_ID_SIZE];
     float score;
     uint32_t x1;
     uint32_t y1;

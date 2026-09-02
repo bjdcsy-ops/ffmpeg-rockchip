@@ -24,6 +24,7 @@ typedef struct FFFrameDecisionROIAdapterConfig {
     const char *sdk_library;
     const char *socket_path;
     int channel_id;
+    const FFFrameDecisionROITargetPolicy *target_policy;
     unsigned connect_timeout_ms;
     unsigned io_timeout_ms;
 } FFFrameDecisionROIAdapterConfig;

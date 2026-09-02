@@ -289,6 +289,26 @@ rockchip_verify_filter_option() {
   fi
 }
 
+rockchip_verify_filter_option_absent() {
+  local binary=$1
+  local filter=$2
+  local option=$3
+  local help_output
+
+  if ! help_output=$("$binary" -hide_banner -h "filter=$filter" 2>&1); then
+    printf 'Failed to query FFmpeg filter options: filter=%s\n' \
+      "$filter" >&2
+    printf '%s\n' "$help_output" >&2
+    return 1
+  fi
+  if grep -Eq "^[[:space:]]+$option([[:space:]]|$)" \
+    <<<"$help_output"; then
+    printf 'Unexpected FFmpeg filter option: filter=%s name=%s\n' \
+      "$filter" "$option" >&2
+    return 1
+  fi
+}
+
 rockchip_write_buildinfo() {
   local artifact_version=$1
   local glibc_max_required=$2
@@ -450,7 +470,7 @@ EOF
     cat >>"$PACKAGE_DIR/README.txt" <<EOF
 
 The frame_decision_roi filter loads this external client at runtime:
-  /opt/frame-decision-service/lib/libframe_decision_client.so.1
+  /opt/frame-decision-service/lib/libframe_decision_client.so.2
 The client and frame-decision daemon are not bundled. Install the matching
 frame-decision-service package before enabling detection. The filter writes
 standard AVFrame ROI side data which the RKMPP encoder consumes directly.
@@ -649,14 +669,19 @@ package_rockchip_runtime() (
       ttl_ms \
       connect_timeout_ms \
       io_timeout_ms \
-      person_qoffset \
-      motor_vehicle_qoffset \
-      non_motor_vehicle_qoffset \
+      target_qoffsets \
       debug_overlay \
       debug_thickness; do
       rockchip_verify_filter_option \
         "$PACKAGE_DIR/ffmpeg" frame_decision_roi "$option"
       filter_option_count=$((filter_option_count + 1))
+    done
+    for option in \
+      person_qoffset \
+      motor_vehicle_qoffset \
+      non_motor_vehicle_qoffset; do
+      rockchip_verify_filter_option_absent \
+        "$PACKAGE_DIR/ffmpeg" frame_decision_roi "$option"
     done
   fi
   printf \

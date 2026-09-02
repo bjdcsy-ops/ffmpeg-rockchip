@@ -29,14 +29,8 @@
 #define FF_FRAME_DECISION_ROI_MAX_REGIONS    8
 #define FF_FRAME_DECISION_ROI_MAX_DETECTIONS 256
 #define FF_FRAME_DECISION_ROI_ALIGNMENT      16
-
-typedef enum FFFrameDecisionROICategory {
-    FF_FRAME_DECISION_ROI_CATEGORY_NONE = 0,
-    FF_FRAME_DECISION_ROI_CATEGORY_PERSON,
-    FF_FRAME_DECISION_ROI_CATEGORY_MOTOR_VEHICLE,
-    FF_FRAME_DECISION_ROI_CATEGORY_NON_MOTOR_VEHICLE,
-    FF_FRAME_DECISION_ROI_CATEGORY_NB,
-} FFFrameDecisionROICategory;
+#define FF_FRAME_DECISION_ROI_TARGET_ID_SIZE 32
+#define FF_FRAME_DECISION_ROI_MAX_TARGETS    16
 
 /**
  * Protocol-independent detector output consumed by the normalizer.
@@ -45,7 +39,7 @@ typedef enum FFFrameDecisionROICategory {
  * into this structure.  Coordinates use half-open pixel bounds.
  */
 typedef struct FFFrameDecisionROIDetection {
-    int category;
+    char target_id[FF_FRAME_DECISION_ROI_TARGET_ID_SIZE];
     double score;
     int64_t left;
     int64_t top;
@@ -53,9 +47,15 @@ typedef struct FFFrameDecisionROIDetection {
     int64_t bottom;
 } FFFrameDecisionROIDetection;
 
-typedef struct FFFrameDecisionROIWeights {
-    AVRational qoffset[FF_FRAME_DECISION_ROI_CATEGORY_NB];
-} FFFrameDecisionROIWeights;
+typedef struct FFFrameDecisionROITarget {
+    char target_id[FF_FRAME_DECISION_ROI_TARGET_ID_SIZE];
+    AVRational qoffset;
+} FFFrameDecisionROITarget;
+
+typedef struct FFFrameDecisionROITargetPolicy {
+    FFFrameDecisionROITarget targets[FF_FRAME_DECISION_ROI_MAX_TARGETS];
+    int nb_targets;
+} FFFrameDecisionROITargetPolicy;
 
 typedef struct FFFrameDecisionROINormalizeStats {
     int rejected;
@@ -64,8 +64,19 @@ typedef struct FFFrameDecisionROINormalizeStats {
     int truncated;
 } FFFrameDecisionROINormalizeStats;
 
-int ff_frame_decision_roi_validate_weights(
-    const FFFrameDecisionROIWeights *weights);
+/**
+ * Parse target_id=qoffset entries separated by '|'.  Target identifiers use
+ * [a-z0-9][a-z0-9._-]{0,30}; qoffset is an integer or num/den rational in
+ * [-1, 1].  An empty string produces an empty (disabled) policy.
+ */
+int ff_frame_decision_roi_parse_target_qoffsets(
+    FFFrameDecisionROITargetPolicy *policy, const char *spec);
+
+int ff_frame_decision_roi_validate_target_policy(
+    const FFFrameDecisionROITargetPolicy *policy);
+
+int ff_frame_decision_roi_target_is_enabled(
+    const FFFrameDecisionROITargetPolicy *policy, const char *target_id);
 
 /**
  * Convert detector rectangles to the single ROI contract used by both the
@@ -83,7 +94,7 @@ int ff_frame_decision_roi_normalize(
     AVRegionOfInterest *regions,
     FFFrameDecisionROINormalizeStats *stats,
     const FFFrameDecisionROIDetection *detections, int nb_detections,
-    const FFFrameDecisionROIWeights *weights,
+    const FFFrameDecisionROITargetPolicy *policy,
     int frame_width, int frame_height);
 
 int ff_frame_decision_roi_snapshot_is_fresh(int64_t capture_time_us,

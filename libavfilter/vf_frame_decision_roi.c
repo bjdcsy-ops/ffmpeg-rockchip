@@ -48,7 +48,7 @@
 #define FD_ROI_DEFAULT_SOCKET \
     "/run/frame-decision/frame-decision-v3.sock"
 #define FD_ROI_DEFAULT_SDK_LIBRARY \
-    "/opt/frame-decision-service/lib/libframe_decision_client.so.1"
+    "/opt/frame-decision-service/lib/libframe_decision_client.so.2"
 #define FD_ROI_LOG_INTERVAL_US (5 * 1000 * 1000)
 #define FD_ROI_SHUTDOWN_GRACE_US (250 * 1000)
 
@@ -73,14 +73,12 @@ typedef struct FrameDecisionROIContext {
     int ttl_ms;
     int connect_timeout_ms;
     int io_timeout_ms;
-    AVRational person_qoffset;
-    AVRational motor_vehicle_qoffset;
-    AVRational non_motor_vehicle_qoffset;
+    char *target_qoffsets;
     int debug_overlay;
     int debug_thickness;
     int rga_initialized;
 
-    FFFrameDecisionROIWeights weights;
+    FFFrameDecisionROITargetPolicy target_policy;
     int detector_enabled;
 
     pthread_t worker;
@@ -107,26 +105,12 @@ typedef struct FrameDecisionROIContext {
     int64_t last_worker_log_us;
 } FrameDecisionROIContext;
 
-static void get_weights(FrameDecisionROIContext *s)
-{
-    memset(&s->weights, 0, sizeof(s->weights));
-    s->weights.qoffset[FF_FRAME_DECISION_ROI_CATEGORY_NONE] =
-        (AVRational) { 0, 1 };
-    s->weights.qoffset[FF_FRAME_DECISION_ROI_CATEGORY_PERSON] =
-        s->person_qoffset;
-    s->weights.qoffset[FF_FRAME_DECISION_ROI_CATEGORY_MOTOR_VEHICLE] =
-        s->motor_vehicle_qoffset;
-    s->weights.qoffset[FF_FRAME_DECISION_ROI_CATEGORY_NON_MOTOR_VEHICLE] =
-        s->non_motor_vehicle_qoffset;
-}
-
-static int any_category_enabled(const FrameDecisionROIContext *s)
+static int any_target_enabled(const FrameDecisionROIContext *s)
 {
     int i;
 
-    for (i = FF_FRAME_DECISION_ROI_CATEGORY_PERSON;
-         i < FF_FRAME_DECISION_ROI_CATEGORY_NB; i++) {
-        if (s->weights.qoffset[i].num)
+    for (i = 0; i < s->target_policy.nb_targets; i++) {
+        if (s->target_policy.targets[i].qoffset.num)
             return 1;
     }
     return 0;
@@ -472,7 +456,7 @@ static void publish_result(AVFilterContext *avctx,
 
     nb_normalized = ff_frame_decision_roi_normalize(
         normalized, &stats, result->detections, result->nb_detections,
-        &s->weights, job->width, job->height);
+        &s->target_policy, job->width, job->height);
     if (nb_normalized < 0) {
         log_worker_error(avctx, "normalizing frame-decision result",
                          nb_normalized);
@@ -644,7 +628,7 @@ static int frame_decision_roi_filter_frame(AVFilterLink *inlink,
         /*
          * Once enabled, this filter owns the ROI side-data contract and an
          * expired/empty snapshot intentionally clears earlier ROI metadata.
-         * With every category disabled it is a true no-op and must preserve
+         * With every target disabled it is a true no-op and must preserve
          * any ROI side data supplied by an upstream filter.
          */
         ret = ff_frame_decision_roi_attach(frame, snapshot, nb_snapshot);
@@ -682,15 +666,17 @@ static av_cold int frame_decision_roi_init(AVFilterContext *avctx)
     pthread_condattr_t cond_attr;
     int ret;
 
-    get_weights(s);
-    ret = ff_frame_decision_roi_validate_weights(&s->weights);
+    ret = ff_frame_decision_roi_parse_target_qoffsets(&s->target_policy,
+                                                       s->target_qoffsets);
     if (ret < 0) {
         av_log(avctx, AV_LOG_ERROR,
-               "category qoffset values must be rationals in [-1, 1]\n");
+               "target_qoffsets must contain unique "
+               "target_id=qoffset entries; IDs use [a-z0-9._-] and "
+               "qoffset rationals must be in [-1, 1]\n");
         return ret;
     }
 
-    s->detector_enabled = any_category_enabled(s);
+    s->detector_enabled = any_target_enabled(s);
     if (s->debug_overlay && s->debug_thickness % 2) {
         av_log(avctx, AV_LOG_ERROR,
                "debug_thickness must be even for NV12 RGA drawing\n");
@@ -700,7 +686,7 @@ static av_cold int frame_decision_roi_init(AVFilterContext *avctx)
         return 0;
     if (s->channel_id < 0) {
         av_log(avctx, AV_LOG_ERROR,
-               "channel_id is required when any category qoffset is non-zero\n");
+               "channel_id is required when any target qoffset is non-zero\n");
         return AVERROR(EINVAL);
     }
 
@@ -782,6 +768,7 @@ static int frame_decision_roi_config_output(AVFilterLink *outlink)
         .sdk_library       = s->sdk_library,
         .socket_path        = s->socket_path,
         .channel_id         = s->channel_id,
+        .target_policy      = &s->target_policy,
         .connect_timeout_ms = s->connect_timeout_ms,
         .io_timeout_ms      = s->io_timeout_ms,
     };
@@ -864,15 +851,9 @@ static const AVOption frame_decision_roi_options[] = {
     { "io_timeout_ms", "frame-decision I/O timeout",
       OFFSET(io_timeout_ms), AV_OPT_TYPE_INT,
       { .i64 = 5000 }, 1, 600000, FLAGS },
-    { "person_qoffset", "quantisation offset for person detections; zero disables",
-      OFFSET(person_qoffset), AV_OPT_TYPE_RATIONAL,
-      { .dbl = 0.0 }, -1.0, 1.0, FLAGS },
-    { "motor_vehicle_qoffset", "quantisation offset for motor vehicles; zero disables",
-      OFFSET(motor_vehicle_qoffset), AV_OPT_TYPE_RATIONAL,
-      { .dbl = 0.0 }, -1.0, 1.0, FLAGS },
-    { "non_motor_vehicle_qoffset", "quantisation offset for non-motor vehicles; zero disables",
-      OFFSET(non_motor_vehicle_qoffset), AV_OPT_TYPE_RATIONAL,
-      { .dbl = 0.0 }, -1.0, 1.0, FLAGS },
+    { "target_qoffsets", "target_id=qoffset pairs separated by '|'; zero disables a target",
+      OFFSET(target_qoffsets), AV_OPT_TYPE_STRING,
+      { .str = NULL }, .flags = FLAGS },
     { "debug_overlay", "draw the normalized ROI snapshot (development mode)",
       OFFSET(debug_overlay), AV_OPT_TYPE_BOOL,
       { .i64 = 0 }, 0, 1, FLAGS },

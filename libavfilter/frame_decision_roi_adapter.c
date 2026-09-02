@@ -9,6 +9,7 @@
  * version 2.1 of the License, or (at your option) any later version.
  */
 
+#include <assert.h>
 #include <dlfcn.h>
 #include <errno.h>
 #include <limits.h>
@@ -27,11 +28,19 @@
 
 #define FD_ROI_RECONNECT_DELAY_US 100000
 
+static_assert(FD_TARGET_ID_SIZE == FF_FRAME_DECISION_ROI_TARGET_ID_SIZE,
+              "frame-decision target ID ABI differs");
+static_assert(FD_V3_WIRE_MAX_TARGETS == FF_FRAME_DECISION_ROI_MAX_TARGETS,
+              "frame-decision target count ABI differs");
+
 typedef struct FFFrameDecisionROIAPI {
     void (*client_config_init)(fd_v3_client_config_t *config);
     int (*client_create)(const fd_v3_client_config_t *config,
                          fd_v3_client_t **client,
                          char *error, size_t error_size);
+    int (*client_set_targets)(fd_v3_client_t *client, uint32_t channel_id,
+                              const char *const *target_ids,
+                              uint32_t target_count);
     int (*client_connect)(fd_v3_client_t *client, uint64_t *server_epoch,
                           int *epoch_changed);
     int (*client_submit_dmabuf)(fd_v3_client_t *client,
@@ -106,6 +115,7 @@ static int load_api(FFFrameDecisionROIAdapter *adapter)
 
     LOAD_API(client_config_init, fd_v3_client_config_init);
     LOAD_API(client_create, fd_v3_client_create);
+    LOAD_API(client_set_targets, fd_v3_client_set_targets);
     LOAD_API(client_connect, fd_v3_client_connect);
     LOAD_API(client_submit_dmabuf, fd_v3_client_submit_dmabuf);
     LOAD_API(client_receive, fd_v3_client_receive);
@@ -302,14 +312,18 @@ static int copy_result(FFFrameDecisionROIAdapter *adapter,
     for (i = 0; i < source->roi_count; i++) {
         const fd_roi_t *roi = &source->rois[i];
 
+        if (!memchr(roi->target_id, '\0', sizeof(roi->target_id)))
+            return AVERROR(EPROTO);
+
         result->detections[i] = (FFFrameDecisionROIDetection) {
-            .category = roi->category,
             .score    = roi->score,
             .left     = roi->x1,
             .top      = roi->y1,
             .right    = roi->x2,
             .bottom   = roi->y2,
         };
+        memcpy(result->detections[i].target_id, roi->target_id,
+               sizeof(result->detections[i].target_id));
     }
     return 0;
 }
@@ -320,7 +334,10 @@ int ff_frame_decision_roi_adapter_create(
 {
     FFFrameDecisionROIAdapter *created;
     fd_v3_client_config_t client_config;
+    const char *target_ids[FF_FRAME_DECISION_ROI_MAX_TARGETS];
     char error[128];
+    uint32_t target_count = 0;
+    int i;
     int ret;
     int status;
 
@@ -328,8 +345,18 @@ int ff_frame_decision_roi_adapter_create(
         !config->sdk_library[0] ||
         !config->socket_path ||
         config->channel_id < 0 ||
+        !config->target_policy ||
+        ff_frame_decision_roi_validate_target_policy(
+            config->target_policy) < 0 ||
         strlen(config->socket_path) >= FD_SOCKET_PATH_SIZE ||
         !config->connect_timeout_ms || !config->io_timeout_ms)
+        return AVERROR(EINVAL);
+    for (i = 0; i < config->target_policy->nb_targets; i++) {
+        if (config->target_policy->targets[i].qoffset.num)
+            target_ids[target_count++] =
+                config->target_policy->targets[i].target_id;
+    }
+    if (!target_count)
         return AVERROR(EINVAL);
     *adapter = NULL;
 
@@ -371,6 +398,23 @@ int ff_frame_decision_roi_adapter_create(
                "frame-decision V3 client rejected ABI %u: %s "
                "(status %d)\n", FD_V3_CLIENT_ABI_VERSION,
                error[0] ? error : "unknown error", status);
+        ret = status_to_averror(status);
+        goto fail;
+    }
+
+    /*
+     * This stores the immutable policy in the client.  client_connect()
+     * sends base HELLO first, then configures these targets, and replays the
+     * configuration after reconnect.  Targeted submit must fail closed when
+     * the server lacks the corresponding capability.
+     */
+    status = created->api.client_set_targets(created->client,
+                                             created->channel_id,
+                                             target_ids, target_count);
+    if (status != FD_OK) {
+        av_log(created->log_ctx, AV_LOG_ERROR,
+               "frame-decision target configuration rejected "
+               "(status %d)\n", status);
         ret = status_to_averror(status);
         goto fail;
     }
@@ -437,7 +481,9 @@ int ff_frame_decision_roi_adapter_submit(
 
     status = adapter->api.client_submit_dmabuf(adapter->client, &frame);
     if (status != FD_OK) {
-        if (status == FD_ERR_IO || status == FD_ERR_PROTOCOL)
+        /* No DMA-BUF ownership transfers on any submit error. */
+        if (status == FD_ERR_IO || status == FD_ERR_PROTOCOL ||
+            status == FD_ERR_CONFIG || status == FD_ERR_UNSUPPORTED)
             adapter->connected = 0;
         return status_to_averror(status);
     }
