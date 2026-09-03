@@ -60,6 +60,7 @@ typedef struct FrameDecisionROIJob {
     FFFrameDecisionROITargetPolicy target_policy;
     uint64_t policy_serial;
     uint64_t target_set_serial;
+    uint64_t control_snapshot_serial;
     uint64_t request_id;
     uint64_t frame_sequence;
     int64_t pts_us;
@@ -95,6 +96,7 @@ typedef struct FrameDecisionROIContext {
     int nb_manual_regions;
     uint64_t policy_serial;
     uint64_t target_set_serial;
+    uint64_t control_snapshot_serial;
     uint64_t adapter_target_set_serial;
     uint64_t blocked_target_set_serial;
     int control_seen;
@@ -205,6 +207,9 @@ static int refresh_control_snapshot(AVFilterContext *avctx)
         return ret;
 
     pthread_mutex_lock(&s->lock);
+    s->control_snapshot_serial++;
+    if (!s->control_snapshot_serial)
+        s->control_snapshot_serial++;
     policy_changed = !target_policy_equal(&s->target_policy,
                                            &snapshot.target_policy);
     target_set_changed = !target_set_equal(&s->target_policy,
@@ -650,7 +655,8 @@ static int create_adapter(AVFilterContext *avctx,
 static int worker_reconfigure_adapter(
     AVFilterContext *avctx,
     const FFFrameDecisionROITargetPolicy *policy,
-    uint64_t target_set_serial)
+    uint64_t target_set_serial,
+    uint64_t control_snapshot_serial)
 {
     FrameDecisionROIContext *s = avctx->priv;
     FFFrameDecisionROIAdapter *old_adapter;
@@ -667,7 +673,8 @@ static int worker_reconfigure_adapter(
         ret = create_adapter(avctx, policy, &new_adapter);
 
     pthread_mutex_lock(&s->lock);
-    if (s->stop || s->target_set_serial != target_set_serial) {
+    if (s->stop || s->target_set_serial != target_set_serial ||
+        s->control_snapshot_serial != control_snapshot_serial) {
         pthread_mutex_unlock(&s->lock);
         ff_frame_decision_roi_adapter_destroy(&new_adapter);
         return AVERROR(EAGAIN);
@@ -707,6 +714,7 @@ static void *frame_decision_roi_worker(void *opaque)
         FrameDecisionROIJob job = { 0 };
         uint64_t desired_policy_serial;
         uint64_t desired_target_set_serial;
+        uint64_t desired_control_snapshot_serial;
         int need_reconfigure;
         int ret;
 
@@ -722,16 +730,20 @@ static void *frame_decision_roi_worker(void *opaque)
         desired_policy = s->target_policy;
         desired_policy_serial = s->policy_serial;
         desired_target_set_serial = s->target_set_serial;
+        desired_control_snapshot_serial = s->control_snapshot_serial;
         need_reconfigure =
             s->adapter_target_set_serial != desired_target_set_serial;
         if (need_reconfigure) {
             pthread_mutex_unlock(&s->lock);
             ret = worker_reconfigure_adapter(avctx, &desired_policy,
-                                             desired_target_set_serial);
+                                             desired_target_set_serial,
+                                             desired_control_snapshot_serial);
             if (ret < 0) {
                 pthread_mutex_lock(&s->lock);
                 if (s->pending.target_set_serial ==
-                        desired_target_set_serial) {
+                        desired_target_set_serial &&
+                    s->pending.control_snapshot_serial ==
+                        desired_control_snapshot_serial) {
                     dropped = s->pending;
                     memset(&s->pending, 0, sizeof(s->pending));
                 }
@@ -762,18 +774,31 @@ static void *frame_decision_roi_worker(void *opaque)
 
         ret = ff_frame_decision_roi_adapter_submit(s->adapter, &request);
         if (ret < 0) {
+            int target_set_rejected = 0;
+            int target_set_stale = 0;
+
             av_frame_free(&job.frame);
-            if (ret == AVERROR(ENOSYS)) {
+            if (ret == AVERROR(ENOSYS) || ret == AVERROR(ENOTSUP)) {
                 pthread_mutex_lock(&s->lock);
-                if (job.target_set_serial == s->target_set_serial) {
+                if (job.target_set_serial == s->target_set_serial &&
+                    job.control_snapshot_serial ==
+                        s->control_snapshot_serial) {
                     s->blocked_target_set_serial = job.target_set_serial;
+                    target_set_rejected = ret == AVERROR(ENOTSUP);
                     dropped = s->pending;
                     memset(&s->pending, 0, sizeof(s->pending));
-                }
+                } else
+                    target_set_stale = 1;
                 pthread_mutex_unlock(&s->lock);
                 av_frame_free(&dropped.frame);
             }
-            log_worker_error(avctx, "submitting frame-decision DMA-BUF", ret);
+            if (target_set_rejected)
+                av_log(avctx, AV_LOG_WARNING,
+                       "frame-decision target set rejected; waiting for a "
+                       "newer ROI snapshot\n");
+            else if (!target_set_stale)
+                log_worker_error(avctx, "submitting frame-decision DMA-BUF",
+                                 ret);
             continue;
         }
 
@@ -826,6 +851,7 @@ static int schedule_detection(AVFilterContext *avctx, AVFilterLink *inlink,
     job.target_policy = s->target_policy;
     job.policy_serial = s->policy_serial;
     job.target_set_serial = s->target_set_serial;
+    job.control_snapshot_serial = s->control_snapshot_serial;
     pthread_mutex_unlock(&s->lock);
 
     job.frame = av_frame_clone(frame);

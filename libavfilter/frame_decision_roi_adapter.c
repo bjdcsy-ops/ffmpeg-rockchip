@@ -485,6 +485,14 @@ int ff_frame_decision_roi_adapter_submit(
         if (status == FD_ERR_IO || status == FD_ERR_PROTOCOL ||
             status == FD_ERR_CONFIG || status == FD_ERR_UNSUPPORTED)
             adapter->connected = 0;
+        /*
+         * The V3 client reports an immutable target-set rejection lazily on
+         * the first targeted submit.  Keep it distinct from FD_ERR_ARGUMENT:
+         * the filter may safely park this target set, while an invalid frame
+         * must remain a per-frame error.
+         */
+        if (status == FD_ERR_CONFIG || status == FD_ERR_UNSUPPORTED)
+            return AVERROR(ENOTSUP);
         return status_to_averror(status);
     }
 
