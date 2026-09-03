@@ -14782,7 +14782,7 @@ is replaced by the newest frame.
 
 @item ttl_ms
 Maximum detector result age measured from capture of the submitted source
-frame.  The default is 500 milliseconds.  This value is sent to the detector
+frame.  The default is 1500 milliseconds.  This value is sent to the detector
 as the request deadline and is checked again before a result may refresh ROI
 state.  It does not control how long an already accepted ROI set is reused.
 

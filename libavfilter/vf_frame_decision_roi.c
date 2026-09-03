@@ -1216,7 +1216,7 @@ static const AVOption frame_decision_roi_options[] = {
       { .i64 = 100 }, 1, 60000, FLAGS },
     { "ttl_ms", "detector result deadline measured from source-frame capture",
       OFFSET(ttl_ms), AV_OPT_TYPE_INT,
-      { .i64 = 500 }, 1, 600000, FLAGS },
+      { .i64 = 1500 }, 1, 600000, FLAGS },
     { "reuse_ttl_ms", "accepted ROI reuse lifetime measured from result receipt",
       OFFSET(reuse_ttl_ms), AV_OPT_TYPE_INT,
       { .i64 = 1000 }, 1, 600000, FLAGS },

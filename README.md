@@ -66,16 +66,27 @@ addroi=x=iw/2:y=0:w=iw/2:h=ih:qoffset=1/4" \
 ```
 
 For live detections on RK3588, place the `frame_decision_roi` filter after the
-final size-changing filter and immediately before the RKMPP encoder. The filter
-submits sampled DMA-BUF frames to frame-decision asynchronously and writes the
-newest fresh detection set to standard FFmpeg ROI frame side data:
+final size-changing filter and immediately before the RKMPP encoder. In a
+Stream Forge managed pipeline, the command only needs the product channel;
+target weights and manual rectangles are updated through the control socket:
+
+```bash
+./ffmpeg -rtsp_transport tcp -c:v h264_rkmpp -afbc 0 -i input \
+  -vf "scale_rkrga=w=1920:h=1080:format=nv12:afbc=0,\
+frame_decision_roi=channel=5" \
+  -c:v hevc_rkmpp \
+  -b:v 4M -f rtsp rtsp://127.0.0.1/live/camera
+```
+
+For standalone FFmpeg, use the raw detector channel and a static target
+policy. Add `:dev=1` only when the final composed rectangles need to be drawn
+on the encoded picture:
 
 ```bash
 ./ffmpeg -rtsp_transport tcp -c:v h264_rkmpp -afbc 0 -i input \
   -vf "scale_rkrga=w=1920:h=1080:format=nv12:afbc=0,\
 frame_decision_roi=channel_id=0:\
-target_qoffsets=face_head=-3/20|motor_vehicle=-1/10:\
-debug_overlay=0" \
+targets=face=-3/20|head=-3/20|motor_vehicle=-1/10" \
   -c:v hevc_rkmpp \
   -b:v 4M -f rtsp rtsp://127.0.0.1/live/camera
 ```
@@ -86,7 +97,7 @@ service socket defaults to `/run/frame-decision/frame-decision-v3.sock`. The
 filter maps generic model targets to independent weights through
 `target_qoffsets`, caps the normalized set at eight non-overlapping regions,
 and rejects detector results that miss the source-frame deadline configured by
-`ttl_ms` (500 ms by default). Only non-zero targets are enabled on the detector
+`ttl_ms` (1500 ms by default). Only non-zero targets are enabled on the detector
 connection, allowing frame-decision to skip unrelated models. A fresh accepted
 non-empty result may be reused for `reuse_ttl_ms` (1000 ms by default), measured
 from result receipt, so multi-channel inference cadence does not create gaps in
@@ -99,10 +110,10 @@ same selected rectangles into a separate RGA output frame. See the
 requirements.
 
 ROI metadata follows the asynchronous RKMPP frame queue, so a new detection can
-become visible after frames already queued for encoding. The target policy is
-fixed when the filter graph is created; changing a channel's selected targets
-or weights requires Stream Forge to recreate that channel's filter graph.
-Incoming ROI coordinates remain live and do not restart or flush the encoder.
+become visible after frames already queued for encoding. Managed target,
+weight, and manual-rectangle changes are applied from atomic control snapshots
+without rebuilding the filter graph or encoder. In standalone mode, the static
+`targets` policy remains fixed for the lifetime of the filter graph.
 Internally RK3588 uses MPP's ROI2 block-map path, while RK3576 uses the legacy
 eight-region path. Both consume the same AVFrame ROI side-data contract, but
 block alignment can make the exact affected pixel boundary differ.
