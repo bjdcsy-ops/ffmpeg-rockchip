@@ -72,7 +72,7 @@ target weights and manual rectangles are updated through the control socket:
 
 ```bash
 ./ffmpeg -rtsp_transport tcp -c:v h264_rkmpp -afbc 0 -i input \
-  -vf "scale_rkrga=w=1920:h=1080:format=nv12:afbc=0,\
+  -vf "scale_rkrga=w=1920:h=1080:format=nv12:async_depth=0,\
 frame_decision_roi=channel=5" \
   -c:v hevc_rkmpp \
   -b:v 4M -f rtsp rtsp://127.0.0.1/live/camera
@@ -84,7 +84,7 @@ on the encoded picture:
 
 ```bash
 ./ffmpeg -rtsp_transport tcp -c:v h264_rkmpp -afbc 0 -i input \
-  -vf "scale_rkrga=w=1920:h=1080:format=nv12:afbc=0,\
+  -vf "scale_rkrga=w=1920:h=1080:format=nv12:async_depth=0,\
 frame_decision_roi=channel_id=0:\
 targets=face=-3/20|head=-3/20|motor_vehicle=-1/10" \
   -c:v hevc_rkmpp \
@@ -113,7 +113,14 @@ ROI metadata follows the asynchronous RKMPP frame queue, so a new detection can
 become visible after frames already queued for encoding. Managed target,
 weight, and manual-rectangle changes are applied from atomic control snapshots
 without rebuilding the filter graph or encoder. In standalone mode, the static
-`targets` policy remains fixed for the lifetime of the filter graph.
+`targets` policy remains fixed for the lifetime of the filter graph. Dynamic
+manual rectangles require an SFRO v1 control publisher (Stream Forge or an
+equivalent standalone publisher); raw `channel_id` mode only supplies the
+static detector policy.
+Overlapping regions are repeatedly merged into their bounding rectangle and
+use the numerically smaller `qoffset`, which preserves the stronger quality
+request. The final set is limited to eight rectangles; managed manual regions
+take priority over detector regions when that limit requires truncation.
 Internally RK3588 uses MPP's ROI2 block-map path, while RK3576 uses the legacy
 eight-region path. Both consume the same AVFrame ROI side-data contract, but
 block alignment can make the exact affected pixel boundary differ.

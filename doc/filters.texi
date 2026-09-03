@@ -14723,9 +14723,11 @@ result which is still inside its configured lifetime.  A result therefore
 describes recent detector state; it is not bound to the exact output frame
 which receives the ROI metadata.  After the filter has initialized, encoding
 continues without fresh ROI metadata while the detector daemon or service is
-unavailable.  The configured client shared library and its required ABI
-symbols must be present during filter initialization; a missing or
-incompatible library causes filter graph configuration to fail.
+unavailable.  A non-zero static detector policy requires the configured client
+shared library and ABI symbols during filter initialization.  A managed filter
+with an empty initial policy loads them only when a control snapshot first
+enables a detector target; if that attempt fails, video and managed manual
+regions continue without detector ROI for that snapshot.
 
 When @option{channel} is set, the filter also connects in the background to
 the Stream Forge ROI control socket.  Each control message atomically replaces
@@ -14740,6 +14742,12 @@ If frame-decision rejects a dynamically selected target set, detector
 submission is suspended for that snapshot while manual regions and video
 continue normally.  A newly committed snapshot or a snapshot replayed after
 a control-server restart triggers one new configuration attempt.
+
+Overlapping rectangles are repeatedly merged into their bounding rectangle.
+The merged rectangle uses the numerically smaller quantisation offset, which
+preserves the stronger quality request.  The final composed set contains at
+most eight rectangles; managed manual rectangles take priority over detector
+rectangles if truncation is required.
 
 The input must use @code{AV_PIX_FMT_DRM_PRIME} with one linear
 @code{DRM_FORMAT_NV12} object.  AFBC, P010, and other layouts are rejected.
@@ -14826,9 +14834,9 @@ Short alias for @option{target_qoffsets}.
 
 @item debug_overlay
 If enabled, copy the frame through RGA and draw bright green borders around
-the normalized ROI set.  This development mode changes pixels and adds an RGA
-operation.  It is disabled by default; production mode passes pixel buffers
-through unchanged.
+the normalized ROI set.  This development mode changes pixels and adds an
+extra RGA pixel-processing stage.  It is disabled by default; production mode
+passes pixel buffers through unchanged.
 
 @item dev
 Short alias for @option{debug_overlay}.
@@ -14861,11 +14869,16 @@ Rockchip MPP:
 
 @example
 ffmpeg -rtsp_transport tcp -c:v h264_rkmpp -afbc 0 -i input \
-  -vf "scale_rkrga=w=1920:h=1080:format=nv12:afbc=0,\
+  -vf "scale_rkrga=w=1920:h=1080:format=nv12:async_depth=0,\
 frame_decision_roi=channel_id=0:\
 targets=face=-3/20|head=-3/20|motor_vehicle=-1/10" \
   -c:v h264_rkmpp -b:v 4M -an output
 @end example
+
+The raw @option{channel_id} mode supplies only a static detector policy.
+Dynamic manual rectangles require an SFRO v1 control publisher and the
+managed @option{channel} mode; that publisher may be Stream Forge or a
+standalone implementation of the same protocol.
 
 @section framepack
 
