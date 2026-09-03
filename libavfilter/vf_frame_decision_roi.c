@@ -819,6 +819,8 @@ static void *frame_decision_roi_worker(void *opaque)
         ret = ff_frame_decision_roi_adapter_receive_result(s->adapter,
                                                            &result);
         if (ret < 0) {
+            if (worker_should_stop(s))
+                break;
             log_worker_error(avctx, "receiving frame-decision result", ret);
             continue;
         }
