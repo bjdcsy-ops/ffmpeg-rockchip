@@ -664,6 +664,8 @@ package_rockchip_runtime() (
     for option in \
       sdk_library \
       socket \
+      control_socket \
+      channel \
       channel_id \
       sample_interval_ms \
       ttl_ms \
@@ -672,7 +674,9 @@ package_rockchip_runtime() (
       connect_timeout_ms \
       io_timeout_ms \
       target_qoffsets \
+      targets \
       debug_overlay \
+      dev \
       debug_thickness; do
       rockchip_verify_filter_option \
         "$PACKAGE_DIR/ffmpeg" frame_decision_roi "$option"

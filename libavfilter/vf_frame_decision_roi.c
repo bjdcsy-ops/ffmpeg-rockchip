@@ -42,11 +42,14 @@
 #include "filters.h"
 #include "frame_decision_roi.h"
 #include "frame_decision_roi_adapter.h"
+#include "frame_decision_roi_control.h"
 #include "rkrga_common.h"
 #include "video.h"
 
 #define FD_ROI_DEFAULT_SOCKET \
     "/run/frame-decision/frame-decision-v3.sock"
+#define FD_ROI_DEFAULT_CONTROL_SOCKET \
+    "/run/stream-forge/roi-control.sock"
 #define FD_ROI_DEFAULT_SDK_LIBRARY \
     "/opt/frame-decision-service/lib/libframe_decision_client.so.2"
 #define FD_ROI_LOG_INTERVAL_US (5 * 1000 * 1000)
@@ -54,6 +57,9 @@
 
 typedef struct FrameDecisionROIJob {
     AVFrame *frame;
+    FFFrameDecisionROITargetPolicy target_policy;
+    uint64_t policy_serial;
+    uint64_t target_set_serial;
     uint64_t request_id;
     uint64_t frame_sequence;
     int64_t pts_us;
@@ -68,7 +74,10 @@ typedef struct FrameDecisionROIContext {
 
     char *sdk_library;
     char *socket_path;
+    char *control_socket_path;
+    int channel;
     int channel_id;
+    int detector_channel_id;
     int sample_interval_ms;
     int ttl_ms;
     int reuse_ttl_ms;
@@ -81,6 +90,14 @@ typedef struct FrameDecisionROIContext {
     int rga_initialized;
 
     FFFrameDecisionROITargetPolicy target_policy;
+    FFFrameDecisionROIManualRegion
+        manual_regions[FF_FRAME_DECISION_ROI_MAX_REGIONS];
+    int nb_manual_regions;
+    uint64_t policy_serial;
+    uint64_t target_set_serial;
+    uint64_t adapter_target_set_serial;
+    uint64_t blocked_target_set_serial;
+    int control_seen;
     int detector_enabled;
 
     pthread_t worker;
@@ -90,11 +107,12 @@ typedef struct FrameDecisionROIContext {
     int worker_started;
     int worker_exited;
     int stop;
-    int adapter_stopped;
+    int input_ownership_stopped;
 
     FrameDecisionROIJob pending;
     AVFrame *pinned_frame;
     FFFrameDecisionROIAdapter *adapter;
+    FFFrameDecisionROIControlClient *control;
 
     AVRegionOfInterest latest[FF_FRAME_DECISION_ROI_MAX_REGIONS];
     int nb_latest;
@@ -108,15 +126,126 @@ typedef struct FrameDecisionROIContext {
     int64_t last_worker_log_us;
 } FrameDecisionROIContext;
 
-static int any_target_enabled(const FrameDecisionROIContext *s)
+static int policy_has_enabled_target(
+    const FFFrameDecisionROITargetPolicy *policy)
 {
     int i;
 
-    for (i = 0; i < s->target_policy.nb_targets; i++) {
-        if (s->target_policy.targets[i].qoffset.num)
+    for (i = 0; i < policy->nb_targets; i++) {
+        if (policy->targets[i].qoffset.num)
             return 1;
     }
     return 0;
+}
+
+static int target_policy_equal(
+    const FFFrameDecisionROITargetPolicy *left,
+    const FFFrameDecisionROITargetPolicy *right)
+{
+    int i;
+
+    if (left->nb_targets != right->nb_targets)
+        return 0;
+    for (i = 0; i < left->nb_targets; i++) {
+        if (strcmp(left->targets[i].target_id,
+                   right->targets[i].target_id) ||
+            av_cmp_q(left->targets[i].qoffset,
+                     right->targets[i].qoffset))
+            return 0;
+    }
+    return 1;
+}
+
+static int target_set_equal(
+    const FFFrameDecisionROITargetPolicy *left,
+    const FFFrameDecisionROITargetPolicy *right)
+{
+    int left_count = 0;
+    int right_count = 0;
+    int i;
+    int j;
+
+    for (i = 0; i < left->nb_targets; i++)
+        left_count += !!left->targets[i].qoffset.num;
+    for (i = 0; i < right->nb_targets; i++)
+        right_count += !!right->targets[i].qoffset.num;
+    if (left_count != right_count)
+        return 0;
+
+    for (i = 0; i < left->nb_targets; i++) {
+        if (!left->targets[i].qoffset.num)
+            continue;
+        for (j = 0; j < right->nb_targets; j++) {
+            if (right->targets[j].qoffset.num &&
+                !strcmp(left->targets[i].target_id,
+                        right->targets[j].target_id))
+                break;
+        }
+        if (j == right->nb_targets)
+            return 0;
+    }
+    return 1;
+}
+
+static int refresh_control_snapshot(AVFilterContext *avctx)
+{
+    FrameDecisionROIContext *s = avctx->priv;
+    FFFrameDecisionROIControlSnapshot snapshot;
+    FrameDecisionROIJob replaced = { 0 };
+    int policy_changed;
+    int retry_blocked;
+    int target_set_changed;
+    int ret;
+
+    if (!s->control)
+        return 0;
+
+    ret = ff_frame_decision_roi_control_get_latest(s->control, &snapshot);
+    if (ret <= 0)
+        return ret;
+
+    pthread_mutex_lock(&s->lock);
+    policy_changed = !target_policy_equal(&s->target_policy,
+                                           &snapshot.target_policy);
+    target_set_changed = !target_set_equal(&s->target_policy,
+                                            &snapshot.target_policy);
+    /* A newly committed/replayed snapshot is an explicit retry point. */
+    retry_blocked = s->blocked_target_set_serial == s->target_set_serial;
+    if (policy_changed || retry_blocked) {
+        s->target_policy = snapshot.target_policy;
+        s->detector_enabled = policy_has_enabled_target(&s->target_policy);
+        s->policy_serial++;
+        if (!s->policy_serial)
+            s->policy_serial++;
+        if (target_set_changed || retry_blocked) {
+            s->target_set_serial++;
+            if (!s->target_set_serial)
+                s->target_set_serial++;
+        }
+
+        s->nb_latest = 0;
+        s->latest_result_time_us = -1;
+        s->first_empty_result_time_us = -1;
+        s->latest_sequence = 0;
+        replaced = s->pending;
+        memset(&s->pending, 0, sizeof(s->pending));
+        pthread_cond_broadcast(&s->cond);
+    }
+    memcpy(s->manual_regions, snapshot.manual_regions,
+           (size_t)snapshot.nb_manual_regions *
+               sizeof(snapshot.manual_regions[0]));
+    s->nb_manual_regions = snapshot.nb_manual_regions;
+    s->control_seen = 1;
+    pthread_mutex_unlock(&s->lock);
+
+    av_frame_free(&replaced.frame);
+    av_log(avctx, AV_LOG_VERBOSE,
+           "applied Stream Forge ROI snapshot epoch=%" PRIu64
+           " revision=%" PRIu64 " targets=%d manual=%d\n",
+           snapshot.server_epoch, snapshot.revision,
+           snapshot.target_policy.nb_targets,
+           snapshot.nb_manual_regions);
+    return 1;
 }
 
 static void log_worker_error(AVFilterContext *avctx, const char *operation,
@@ -380,7 +509,7 @@ static void stop_adapter_with_pinned_input(AVFilterContext *avctx,
     FrameDecisionROIJob pending = { 0 };
 
     pthread_mutex_lock(&s->lock);
-    s->adapter_stopped = 1;
+    s->input_ownership_stopped = 1;
     s->pinned_frame = job->frame;
     job->frame = NULL;
     pending = s->pending;
@@ -459,7 +588,7 @@ static void publish_result(AVFilterContext *avctx,
 
     nb_normalized = ff_frame_decision_roi_normalize(
         normalized, &stats, result->detections, result->nb_detections,
-        &s->target_policy, job->width, job->height);
+        &job->target_policy, job->width, job->height);
     if (nb_normalized < 0) {
         log_worker_error(avctx, "normalizing frame-decision result",
                          nb_normalized);
@@ -467,7 +596,8 @@ static void publish_result(AVFilterContext *avctx,
     }
 
     pthread_mutex_lock(&s->lock);
-    if (!s->stop && job->frame_sequence >= s->latest_sequence) {
+    if (!s->stop && job->policy_serial == s->policy_serial &&
+        job->frame_sequence >= s->latest_sequence) {
         if (nb_normalized > 0) {
             memcpy(s->latest, normalized,
                    (size_t)nb_normalized * sizeof(normalized[0]));
@@ -499,30 +629,127 @@ static void publish_result(AVFilterContext *avctx,
                stats.truncated);
 }
 
+static int create_adapter(AVFilterContext *avctx,
+                          const FFFrameDecisionROITargetPolicy *policy,
+                          FFFrameDecisionROIAdapter **adapter)
+{
+    FrameDecisionROIContext *s = avctx->priv;
+    const FFFrameDecisionROIAdapterConfig adapter_config = {
+        .log_ctx           = avctx,
+        .sdk_library       = s->sdk_library,
+        .socket_path        = s->socket_path,
+        .channel_id         = s->detector_channel_id,
+        .target_policy      = policy,
+        .connect_timeout_ms = s->connect_timeout_ms,
+        .io_timeout_ms      = s->io_timeout_ms,
+    };
+
+    return ff_frame_decision_roi_adapter_create(adapter, &adapter_config);
+}
+
+static int worker_reconfigure_adapter(
+    AVFilterContext *avctx,
+    const FFFrameDecisionROITargetPolicy *policy,
+    uint64_t target_set_serial)
+{
+    FrameDecisionROIContext *s = avctx->priv;
+    FFFrameDecisionROIAdapter *old_adapter;
+    FFFrameDecisionROIAdapter *new_adapter = NULL;
+    int ret = 0;
+
+    pthread_mutex_lock(&s->lock);
+    old_adapter = s->adapter;
+    s->adapter = NULL;
+    pthread_mutex_unlock(&s->lock);
+    ff_frame_decision_roi_adapter_destroy(&old_adapter);
+
+    if (policy_has_enabled_target(policy))
+        ret = create_adapter(avctx, policy, &new_adapter);
+
+    pthread_mutex_lock(&s->lock);
+    if (s->stop || s->target_set_serial != target_set_serial) {
+        pthread_mutex_unlock(&s->lock);
+        ff_frame_decision_roi_adapter_destroy(&new_adapter);
+        return AVERROR(EAGAIN);
+    }
+    s->adapter = new_adapter;
+    s->adapter_target_set_serial = target_set_serial;
+    if (ret >= 0) {
+        if (s->blocked_target_set_serial == target_set_serial)
+            s->blocked_target_set_serial = 0;
+    } else {
+        /*
+         * A bad dynamic target set must not turn the worker into a hot retry
+         * loop.  Keep video flowing and retry only after the target set
+         * changes; qoffset-only updates intentionally keep the same adapter.
+         */
+        s->blocked_target_set_serial = target_set_serial;
+    }
+    pthread_mutex_unlock(&s->lock);
+
+    if (ret < 0)
+        log_worker_error(avctx, "configuring frame-decision targets", ret);
+    return ret;
+}
+
 static void *frame_decision_roi_worker(void *opaque)
 {
     AVFilterContext *avctx = opaque;
     FrameDecisionROIContext *s = avctx->priv;
 
     for (;;) {
+        FFFrameDecisionROITargetPolicy desired_policy;
         FFFrameDecisionROIDMABufRequest request;
         FFFrameDecisionROIAdapterResult result;
         FFFrameDecisionROIInputDisposition disposition =
             FF_FRAME_DECISION_ROI_INPUT_RELEASE;
+        FrameDecisionROIJob dropped = { 0 };
         FrameDecisionROIJob job = { 0 };
+        uint64_t desired_policy_serial;
+        uint64_t desired_target_set_serial;
+        int need_reconfigure;
         int ret;
 
         pthread_mutex_lock(&s->lock);
-        while (!s->stop && !s->pending.frame)
+        while (!s->stop && !s->pending.frame &&
+               s->adapter_target_set_serial == s->target_set_serial)
             pthread_cond_wait(&s->cond, &s->lock);
         if (s->stop) {
             pthread_mutex_unlock(&s->lock);
             break;
         }
+
+        desired_policy = s->target_policy;
+        desired_policy_serial = s->policy_serial;
+        desired_target_set_serial = s->target_set_serial;
+        need_reconfigure =
+            s->adapter_target_set_serial != desired_target_set_serial;
+        if (need_reconfigure) {
+            pthread_mutex_unlock(&s->lock);
+            ret = worker_reconfigure_adapter(avctx, &desired_policy,
+                                             desired_target_set_serial);
+            if (ret < 0) {
+                pthread_mutex_lock(&s->lock);
+                if (s->pending.target_set_serial ==
+                        desired_target_set_serial) {
+                    dropped = s->pending;
+                    memset(&s->pending, 0, sizeof(s->pending));
+                }
+                pthread_mutex_unlock(&s->lock);
+                av_frame_free(&dropped.frame);
+            }
+            continue;
+        }
+
         job = s->pending;
         memset(&s->pending, 0, sizeof(s->pending));
         pthread_mutex_unlock(&s->lock);
 
+        if (!job.frame || job.policy_serial != desired_policy_serial ||
+            !s->adapter) {
+            av_frame_free(&job.frame);
+            continue;
+        }
         ret = drm_request_from_frame(avctx, &job, &request);
         if (ret < 0) {
             av_frame_free(&job.frame);
@@ -538,8 +765,13 @@ static void *frame_decision_roi_worker(void *opaque)
             av_frame_free(&job.frame);
             if (ret == AVERROR(ENOSYS)) {
                 pthread_mutex_lock(&s->lock);
-                s->adapter_stopped = 1;
+                if (job.target_set_serial == s->target_set_serial) {
+                    s->blocked_target_set_serial = job.target_set_serial;
+                    dropped = s->pending;
+                    memset(&s->pending, 0, sizeof(s->pending));
+                }
                 pthread_mutex_unlock(&s->lock);
+                av_frame_free(&dropped.frame);
             }
             log_worker_error(avctx, "submitting frame-decision DMA-BUF", ret);
             continue;
@@ -581,7 +813,9 @@ static int schedule_detection(AVFilterContext *avctx, AVFilterLink *inlink,
     FrameDecisionROIJob replaced = { 0 };
 
     pthread_mutex_lock(&s->lock);
-    if (s->stop || s->adapter_stopped ||
+    if (s->stop || s->input_ownership_stopped ||
+        s->blocked_target_set_serial == s->target_set_serial ||
+        !s->detector_enabled ||
         now_us < s->next_sample_time_us) {
         pthread_mutex_unlock(&s->lock);
         return 0;
@@ -589,6 +823,9 @@ static int schedule_detection(AVFilterContext *avctx, AVFilterLink *inlink,
     s->next_sample_time_us = now_us + (int64_t)s->sample_interval_ms * 1000;
     job.request_id = s->next_request_id++;
     job.frame_sequence = s->next_frame_sequence++;
+    job.target_policy = s->target_policy;
+    job.policy_serial = s->policy_serial;
+    job.target_set_serial = s->target_set_serial;
     pthread_mutex_unlock(&s->lock);
 
     job.frame = av_frame_clone(frame);
@@ -603,7 +840,10 @@ static int schedule_detection(AVFilterContext *avctx, AVFilterLink *inlink,
                               AV_TIME_BASE_Q);
 
     pthread_mutex_lock(&s->lock);
-    if (s->stop || s->adapter_stopped) {
+    if (s->stop || s->input_ownership_stopped ||
+        s->blocked_target_set_serial == s->target_set_serial ||
+        !s->detector_enabled ||
+        job.policy_serial != s->policy_serial) {
         pthread_mutex_unlock(&s->lock);
         av_frame_free(&job.frame);
         return 0;
@@ -623,11 +863,19 @@ static int frame_decision_roi_filter_frame(AVFilterLink *inlink,
     AVFilterContext *avctx = inlink->dst;
     AVFilterLink *outlink = avctx->outputs[0];
     FrameDecisionROIContext *s = avctx->priv;
+    AVRegionOfInterest detector_snapshot[FF_FRAME_DECISION_ROI_MAX_REGIONS];
     AVRegionOfInterest snapshot[FF_FRAME_DECISION_ROI_MAX_REGIONS];
+    FFFrameDecisionROIManualRegion
+        manual_snapshot[FF_FRAME_DECISION_ROI_MAX_REGIONS];
+    FFFrameDecisionROINormalizeStats compose_stats;
     FFFrameDecisionROIDMABufRequest validated_request;
     FrameDecisionROIJob validation_job = { .frame = frame };
     const int64_t now_us = av_gettime_relative();
+    int detector_enabled;
+    int nb_detector_snapshot = 0;
+    int nb_manual_snapshot;
     int nb_snapshot = 0;
+    int owns_roi;
     int ret;
 
     ret = drm_request_from_frame(avctx, &validation_job,
@@ -635,28 +883,58 @@ static int frame_decision_roi_filter_frame(AVFilterLink *inlink,
     if (ret < 0)
         goto fail;
 
-    if (s->detector_enabled) {
+    ret = refresh_control_snapshot(avctx);
+    if (ret < 0)
+        goto fail;
+
+    if (s->sync_initialized) {
         pthread_mutex_lock(&s->lock);
+        detector_enabled = s->detector_enabled;
+        owns_roi = detector_enabled || s->control_seen;
         if (ff_frame_decision_roi_snapshot_should_apply(
                 s->latest_result_time_us,
                 s->first_empty_result_time_us,
                 now_us, s->miss_hold_ms, s->reuse_ttl_ms)) {
-            nb_snapshot = s->nb_latest;
-            memcpy(snapshot, s->latest,
-                   (size_t)nb_snapshot * sizeof(snapshot[0]));
+            nb_detector_snapshot = s->nb_latest;
+            memcpy(detector_snapshot, s->latest,
+                   (size_t)nb_detector_snapshot *
+                       sizeof(detector_snapshot[0]));
         }
+        nb_manual_snapshot = s->nb_manual_regions;
+        memcpy(manual_snapshot, s->manual_regions,
+               (size_t)nb_manual_snapshot * sizeof(manual_snapshot[0]));
         pthread_mutex_unlock(&s->lock);
+    } else {
+        detector_enabled = 0;
+        owns_roi = 0;
+        nb_manual_snapshot = 0;
+    }
 
+    if (owns_roi) {
         /*
-         * Once enabled, this filter owns the ROI side-data contract and an
-         * expired/empty snapshot intentionally clears earlier ROI metadata.
-         * With every target disabled it is a true no-op and must preserve
-         * any ROI side data supplied by an upstream filter.
+         * A managed channel owns the final ROI side-data contract.  Detection
+         * and manual control snapshots are composed once here so the encoder
+         * and development overlay always observe the same disjoint set.
          */
+        nb_snapshot = ff_frame_decision_roi_compose_normalized(
+            snapshot, &compose_stats,
+            detector_snapshot, nb_detector_snapshot,
+            manual_snapshot, nb_manual_snapshot,
+            frame->width, frame->height);
+        if (nb_snapshot < 0) {
+            ret = nb_snapshot;
+            goto fail;
+        }
         ret = ff_frame_decision_roi_attach(frame, snapshot, nb_snapshot);
         if (ret < 0)
             goto fail;
+        if (compose_stats.truncated)
+            av_log(avctx, AV_LOG_VERBOSE,
+                   "final ROI set truncated by %d region(s)\n",
+                   compose_stats.truncated);
+    }
 
+    if (detector_enabled) {
         ret = schedule_detection(avctx, inlink, frame, now_us);
         if (ret < 0)
             goto fail;
@@ -698,19 +976,38 @@ static av_cold int frame_decision_roi_init(AVFilterContext *avctx)
         return ret;
     }
 
-    s->detector_enabled = any_target_enabled(s);
+    if (s->channel >= 0 && s->channel_id >= 0) {
+        av_log(avctx, AV_LOG_ERROR,
+               "channel and legacy channel_id cannot be used together\n");
+        return AVERROR(EINVAL);
+    }
+    if (s->channel >= 0) {
+        if (s->channel < 1 || s->channel > 16) {
+            av_log(avctx, AV_LOG_ERROR,
+                   "channel must be a Stream Forge channel in [1, 16]\n");
+            return AVERROR(EINVAL);
+        }
+        s->detector_channel_id = s->channel - 1;
+    } else {
+        s->detector_channel_id = s->channel_id;
+    }
+
+    s->detector_enabled = policy_has_enabled_target(&s->target_policy);
     if (s->debug_overlay && s->debug_thickness % 2) {
         av_log(avctx, AV_LOG_ERROR,
                "debug_thickness must be even for NV12 RGA drawing\n");
         return AVERROR(EINVAL);
     }
-    if (!s->detector_enabled)
-        return 0;
-    if (s->channel_id < 0) {
+    if (s->detector_enabled && s->detector_channel_id < 0) {
         av_log(avctx, AV_LOG_ERROR,
-               "channel_id is required when any target qoffset is non-zero\n");
+               "channel or channel_id is required when any target "
+               "qoffset is non-zero\n");
         return AVERROR(EINVAL);
     }
+    if (!s->detector_enabled &&
+        (s->channel < 1 || !s->control_socket_path ||
+         !s->control_socket_path[0]))
+        return 0;
 
     ret = pthread_mutex_init(&s->lock, NULL);
     if (ret)
@@ -729,6 +1026,8 @@ static av_cold int frame_decision_roi_init(AVFilterContext *avctx)
         return AVERROR(ret);
     }
     s->sync_initialized = 1;
+    s->policy_serial = 1;
+    s->target_set_serial = 1;
     s->latest_result_time_us = -1;
     s->first_empty_result_time_us = -1;
     s->next_request_id = 1;
@@ -745,7 +1044,7 @@ static int frame_decision_roi_config_output(AVFilterLink *outlink)
     FilterLink *outl = ff_filter_link(outlink);
     FrameDecisionROIContext *s = avctx->priv;
     AVHWFramesContext *frames_ctx;
-    FFFrameDecisionROIAdapterConfig adapter_config;
+    FFFrameDecisionROIControlConfig control_config;
     RKRGAParam rga_param = { 0 };
     int ret;
 
@@ -783,26 +1082,40 @@ static int frame_decision_roi_config_output(AVFilterLink *outlink)
             return AVERROR(ENOMEM);
     }
 
-    if (!s->detector_enabled || s->worker_started)
+    if (!s->sync_initialized || s->worker_started)
         return 0;
 
-    adapter_config = (FFFrameDecisionROIAdapterConfig) {
-        .log_ctx           = avctx,
-        .sdk_library       = s->sdk_library,
-        .socket_path        = s->socket_path,
-        .channel_id         = s->channel_id,
-        .target_policy      = &s->target_policy,
-        .connect_timeout_ms = s->connect_timeout_ms,
-        .io_timeout_ms      = s->io_timeout_ms,
-    };
-    ret = ff_frame_decision_roi_adapter_create(&s->adapter,
-                                                &adapter_config);
-    if (ret < 0)
-        return ret;
+    if (s->channel >= 1 && s->control_socket_path &&
+        s->control_socket_path[0]) {
+        control_config = (FFFrameDecisionROIControlConfig) {
+            .log_ctx     = avctx,
+            .socket_path = s->control_socket_path,
+            .channel     = s->channel,
+        };
+        ret = ff_frame_decision_roi_control_create(&s->control,
+                                                    &control_config);
+        if (ret < 0)
+            return ret;
+        ret = ff_frame_decision_roi_control_start(s->control);
+        if (ret < 0) {
+            ff_frame_decision_roi_control_destroy(&s->control);
+            return ret;
+        }
+    }
+
+    if (s->detector_enabled) {
+        ret = create_adapter(avctx, &s->target_policy, &s->adapter);
+        if (ret < 0) {
+            ff_frame_decision_roi_control_destroy(&s->control);
+            return ret;
+        }
+    }
+    s->adapter_target_set_serial = s->target_set_serial;
 
     ret = pthread_create(&s->worker, NULL, frame_decision_roi_worker, avctx);
     if (ret) {
         ff_frame_decision_roi_adapter_destroy(&s->adapter);
+        ff_frame_decision_roi_control_destroy(&s->control);
         return AVERROR(ret);
     }
     s->worker_started = 1;
@@ -815,6 +1128,8 @@ static av_cold void frame_decision_roi_uninit(AVFilterContext *avctx)
     FrameDecisionROIContext *s = avctx->priv;
     FrameDecisionROIJob pending = { 0 };
 
+    ff_frame_decision_roi_control_destroy(&s->control);
+
     if (s->sync_initialized) {
         pthread_mutex_lock(&s->lock);
         s->stop = 1;
@@ -825,8 +1140,11 @@ static av_cold void frame_decision_roi_uninit(AVFilterContext *avctx)
 
         av_frame_free(&pending.frame);
         if (s->worker_started &&
-            !wait_for_worker_exit(s, FD_ROI_SHUTDOWN_GRACE_US))
+            !wait_for_worker_exit(s, FD_ROI_SHUTDOWN_GRACE_US)) {
+            pthread_mutex_lock(&s->lock);
             ff_frame_decision_roi_adapter_interrupt(s->adapter);
+            pthread_mutex_unlock(&s->lock);
+        }
         if (s->worker_started)
             pthread_join(s->worker, NULL);
 
@@ -860,7 +1178,12 @@ static const AVOption frame_decision_roi_options[] = {
     { "socket", "frame-decision V3 Unix socket path",
       OFFSET(socket_path), AV_OPT_TYPE_STRING,
       { .str = FD_ROI_DEFAULT_SOCKET }, .flags = FLAGS },
-    { "channel_id", "frame-decision logical channel (required when enabled)",
+    { "control_socket", "Stream Forge ROI control Unix socket path; empty disables control",
+      OFFSET(control_socket_path), AV_OPT_TYPE_STRING,
+      { .str = FD_ROI_DEFAULT_CONTROL_SOCKET }, .flags = FLAGS },
+    { "channel", "Stream Forge channel in [1,16] (maps to frame-decision [0,15])",
+      OFFSET(channel), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 16, FLAGS },
+    { "channel_id", "legacy raw frame-decision channel in [0,15]",
       OFFSET(channel_id), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 15, FLAGS },
     { "sample_interval_ms", "minimum interval between detector submissions",
       OFFSET(sample_interval_ms), AV_OPT_TYPE_INT,
@@ -884,7 +1207,13 @@ static const AVOption frame_decision_roi_options[] = {
     { "target_qoffsets", "target_id=qoffset pairs separated by '|'; zero disables a target",
       OFFSET(target_qoffsets), AV_OPT_TYPE_STRING,
       { .str = NULL }, .flags = FLAGS },
+    { "targets", "short alias for target_qoffsets",
+      OFFSET(target_qoffsets), AV_OPT_TYPE_STRING,
+      { .str = NULL }, .flags = FLAGS },
     { "debug_overlay", "draw the normalized ROI snapshot (development mode)",
+      OFFSET(debug_overlay), AV_OPT_TYPE_BOOL,
+      { .i64 = 0 }, 0, 1, FLAGS },
+    { "dev", "short alias for debug_overlay",
       OFFSET(debug_overlay), AV_OPT_TYPE_BOOL,
       { .i64 = 0 }, 0, 1, FLAGS },
     { "debug_thickness", "debug ROI border thickness in pixels",
@@ -914,7 +1243,7 @@ static const AVFilterPad frame_decision_roi_outputs[] = {
 const FFFilter ff_vf_frame_decision_roi = {
     .p.name         = "frame_decision_roi",
     .p.description  = NULL_IF_CONFIG_SMALL(
-        "Attach frame-decision ROI metadata to linear NV12 DRM frames."),
+        "Compose detection and managed ROI metadata on linear NV12 DRM frames."),
     .p.priv_class   = &frame_decision_roi_class,
     .p.flags        = AVFILTER_FLAG_HWDEVICE,
     .priv_size      = sizeof(FrameDecisionROIContext),

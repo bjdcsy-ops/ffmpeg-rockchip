@@ -213,6 +213,311 @@ static int test_deterministic_cap(void)
     return 0;
 }
 
+static int test_manual_coordinate_conversion(void)
+{
+    const FFFrameDecisionROIManualRegion manual_regions[] = {
+        {
+            .roi_id  = "small",
+            .x       = 10000,
+            .y       = 20000,
+            .width   = 10000,
+            .height  = 10000,
+            .qoffset = { -1, 8 },
+        },
+        {
+            .roi_id  = "edge",
+            .x       = FF_FRAME_DECISION_ROI_COORDINATE_SCALE - 1,
+            .y       = FF_FRAME_DECISION_ROI_COORDINATE_SCALE - 1,
+            .width   = 1,
+            .height  = 1,
+            .qoffset = { -1, 4 },
+        },
+    };
+    const FFFrameDecisionROIManualRegion full_frame = {
+        .roi_id  = "full",
+        .x       = 0,
+        .y       = 0,
+        .width   = FF_FRAME_DECISION_ROI_COORDINATE_SCALE,
+        .height  = FF_FRAME_DECISION_ROI_COORDINATE_SCALE,
+        .qoffset = { -1, 16 },
+    };
+    AVRegionOfInterest regions[FF_FRAME_DECISION_ROI_MAX_REGIONS];
+    FFFrameDecisionROINormalizeStats stats;
+    int count;
+
+    count = ff_frame_decision_roi_compose_normalized(
+        regions, &stats, NULL, 0, manual_regions,
+        FF_ARRAY_ELEMS(manual_regions), 1920, 1080);
+    CHECK(count == 2, "manual coordinate conversion count differs");
+    CHECK(regions[0].left == 1904 && regions[0].top == 1072 &&
+          regions[0].right == 1920 && regions[0].bottom == 1080,
+          "right-edge ppm conversion or clipping differs");
+    CHECK(regions[1].left == 16 && regions[1].top == 16 &&
+          regions[1].right == 48 && regions[1].bottom == 48,
+          "ppm floor/ceil or outward alignment differs");
+    CHECK(av_cmp_q(regions[0].qoffset, (AVRational) { -1, 4 }) == 0 &&
+          av_cmp_q(regions[1].qoffset, (AVRational) { -1, 8 }) == 0,
+          "manual absolute-qoffset ordering differs");
+    CHECK(!stats.rejected && !stats.disabled && !stats.merged &&
+          !stats.truncated,
+          "valid manual coordinates changed statistics");
+
+    count = ff_frame_decision_roi_compose_normalized(
+        regions, NULL, NULL, 0, &full_frame, 1, 1919, 1079);
+    CHECK(count == 1 && regions[0].left == 0 && regions[0].top == 0 &&
+          regions[0].right == 1919 && regions[0].bottom == 1079,
+          "full-frame ppm boundary was not preserved");
+    return 0;
+}
+
+static int test_manual_validation(void)
+{
+    const FFFrameDecisionROIManualRegion manual_regions[] = {
+        {
+            .x       = FF_FRAME_DECISION_ROI_COORDINATE_SCALE,
+            .width   = 1,
+            .height  = 1,
+            .qoffset = { -1, 8 },
+        },
+        {
+            .y       = FF_FRAME_DECISION_ROI_COORDINATE_SCALE,
+            .width   = 1,
+            .height  = 1,
+            .qoffset = { -1, 8 },
+        },
+        {
+            .width   = 0,
+            .height  = 1,
+            .qoffset = { -1, 8 },
+        },
+        {
+            .x       = 900000,
+            .width   = 100001,
+            .height  = 1,
+            .qoffset = { -1, 8 },
+        },
+        {
+            .width   = 1,
+            .height  = 1,
+            .qoffset = { -1, 0 },
+        },
+        {
+            .width   = 1,
+            .height  = 1,
+            .qoffset = { -2, 1 },
+        },
+        {
+            .width   = 1,
+            .height  = 1,
+            .qoffset = { 0, 1 },
+        },
+    };
+    FFFrameDecisionROIManualRegion too_many[
+        FF_FRAME_DECISION_ROI_MAX_REGIONS + 1] = { 0 };
+    AVRegionOfInterest regions[FF_FRAME_DECISION_ROI_MAX_REGIONS];
+    FFFrameDecisionROINormalizeStats stats;
+    int count;
+
+    count = ff_frame_decision_roi_compose_normalized(
+        regions, &stats, NULL, 0, manual_regions,
+        FF_ARRAY_ELEMS(manual_regions), 64, 64);
+    CHECK(count == 0, "invalid or disabled manual ROI was emitted");
+    CHECK(stats.rejected == 6 && stats.disabled == 1,
+          "manual rejection statistics differ");
+    CHECK(ff_frame_decision_roi_compose_normalized(
+              regions, NULL, NULL, 0, NULL, -1, 64, 64) ==
+              AVERROR(EINVAL),
+          "negative manual count accepted");
+    CHECK(ff_frame_decision_roi_compose_normalized(
+              regions, NULL, NULL, 0, too_many,
+              FF_ARRAY_ELEMS(too_many), 64, 64) == AVERROR(E2BIG),
+          "more than eight manual regions accepted");
+    CHECK(ff_frame_decision_roi_compose_normalized(
+              regions, NULL, NULL, 0, manual_regions, 1, 0, 64) ==
+              AVERROR(EINVAL),
+          "zero frame width accepted by composer");
+    return 0;
+}
+
+static int test_compose_repeated_union_and_qoffset(void)
+{
+    const AVRegionOfInterest detector_regions[] = {
+        {
+            .self_size = sizeof(AVRegionOfInterest),
+            .top = 0, .bottom = 64, .left = 0, .right = 16,
+            .qoffset = { -1, 8 },
+        },
+        {
+            .self_size = sizeof(AVRegionOfInterest),
+            .top = 32, .bottom = 48, .left = 32, .right = 48,
+            .qoffset = { 1, 4 },
+        },
+    };
+    const FFFrameDecisionROIManualRegion manual_region = {
+        .roi_id  = "bridge",
+        .x       = 0,
+        .y       = 0,
+        .width   = FF_FRAME_DECISION_ROI_COORDINATE_SCALE,
+        .height  = FF_FRAME_DECISION_ROI_COORDINATE_SCALE / 4,
+        .qoffset = { -1, 2 },
+    };
+    AVRegionOfInterest regions[FF_FRAME_DECISION_ROI_MAX_REGIONS];
+    FFFrameDecisionROINormalizeStats stats;
+    int count;
+
+    count = ff_frame_decision_roi_compose_normalized(
+        regions, &stats, detector_regions,
+        FF_ARRAY_ELEMS(detector_regions), &manual_region, 1, 64, 64);
+    CHECK(count == 1, "transitive overlap was not fully merged");
+    CHECK(stats.merged == 2, "transitive merge count differs");
+    CHECK(regions[0].left == 0 && regions[0].top == 0 &&
+          regions[0].right == 64 && regions[0].bottom == 64,
+          "transitive rectangular union bounds differ");
+    CHECK(av_cmp_q(regions[0].qoffset, (AVRational) { -1, 2 }) == 0,
+          "merged ROI did not retain the lowest qoffset");
+    return 0;
+}
+
+static int test_manual_priority_at_cap(void)
+{
+    AVRegionOfInterest detector_regions[FF_FRAME_DECISION_ROI_MAX_REGIONS];
+    FFFrameDecisionROIManualRegion manual_regions[
+        FF_FRAME_DECISION_ROI_MAX_REGIONS];
+    AVRegionOfInterest regions[FF_FRAME_DECISION_ROI_MAX_REGIONS];
+    FFFrameDecisionROINormalizeStats stats;
+    int count;
+    int i;
+
+    for (i = 0; i < FF_FRAME_DECISION_ROI_MAX_REGIONS; i++) {
+        detector_regions[i] = (AVRegionOfInterest) {
+            .self_size = sizeof(AVRegionOfInterest),
+            .top = 0, .bottom = 16,
+            .left = i * 32, .right = i * 32 + 16,
+            .qoffset = { -1, 1 },
+        };
+        manual_regions[i] = (FFFrameDecisionROIManualRegion) {
+            .x       = i * 62500,
+            .y       = 500000,
+            .width   = 31250,
+            .height  = 250000,
+            .qoffset = { -1, 100 },
+        };
+    }
+
+    count = ff_frame_decision_roi_compose_normalized(
+        regions, &stats, detector_regions,
+        FF_ARRAY_ELEMS(detector_regions), manual_regions,
+        FF_ARRAY_ELEMS(manual_regions), 512, 64);
+    CHECK(count == FF_FRAME_DECISION_ROI_MAX_REGIONS,
+          "composed ROI cap differs");
+    CHECK(stats.truncated == FF_FRAME_DECISION_ROI_MAX_REGIONS,
+          "composed truncation count differs");
+    for (i = 0; i < count; i++) {
+        CHECK(regions[i].top == 32 && regions[i].bottom == 48 &&
+              regions[i].left == i * 32 &&
+              regions[i].right == i * 32 + 16,
+              "detector ROI displaced a manual ROI at the cap");
+    }
+    return 0;
+}
+
+static int test_raw_detection_and_manual_compose(void)
+{
+    const FFFrameDecisionROITargetPolicy policy = test_policy();
+    const FFFrameDecisionROIDetection detection = {
+        "face_head", 1.0, 0, 0, 16, 16,
+    };
+    const FFFrameDecisionROIManualRegion manual_region = {
+        .roi_id  = "manual",
+        .x       = 750000,
+        .y       = 750000,
+        .width   = 250000,
+        .height  = 250000,
+        .qoffset = { -1, 16 },
+    };
+    AVRegionOfInterest regions[FF_FRAME_DECISION_ROI_MAX_REGIONS];
+    int count;
+
+    count = ff_frame_decision_roi_compose(
+        regions, NULL, &detection, 1, &policy, &manual_region, 1,
+        64, 64);
+    CHECK(count == 2, "raw detector/manual composition count differs");
+    CHECK(regions[0].left == 48 && regions[0].top == 48 &&
+          regions[0].right == 64 && regions[0].bottom == 64,
+          "manual ROI did not sort ahead of detector ROI");
+    CHECK(regions[1].left == 0 && regions[1].top == 0 &&
+          regions[1].right == 16 && regions[1].bottom == 16,
+          "raw detector ROI was not normalized by composer");
+    return 0;
+}
+
+static int test_normalized_detector_validation(void)
+{
+    const AVRegionOfInterest detector_regions[] = {
+        {
+            .self_size = 0,
+            .top = 0, .bottom = 16, .left = 0, .right = 16,
+            .qoffset = { -1, 8 },
+        },
+        {
+            .self_size = sizeof(AVRegionOfInterest),
+            .top = 0, .bottom = 16, .left = 0, .right = 16,
+            .qoffset = { -1, 0 },
+        },
+        {
+            .self_size = sizeof(AVRegionOfInterest),
+            .top = 0, .bottom = 16, .left = 0, .right = 16,
+            .qoffset = { 0, 1 },
+        },
+        {
+            .self_size = sizeof(AVRegionOfInterest),
+            .top = 80, .bottom = 96, .left = 80, .right = 96,
+            .qoffset = { -1, 8 },
+        },
+    };
+    AVRegionOfInterest too_many[FF_FRAME_DECISION_ROI_MAX_REGIONS + 1];
+    AVRegionOfInterest regions[FF_FRAME_DECISION_ROI_MAX_REGIONS];
+    FFFrameDecisionROINormalizeStats stats;
+    int count;
+
+    count = ff_frame_decision_roi_compose_normalized(
+        regions, &stats, detector_regions,
+        FF_ARRAY_ELEMS(detector_regions), NULL, 0, 64, 64);
+    CHECK(count == 0, "invalid or disabled detector ROI was emitted");
+    CHECK(stats.rejected == 3 && stats.disabled == 1,
+          "normalized detector rejection statistics differ");
+    CHECK(ff_frame_decision_roi_compose_normalized(
+              regions, NULL, too_many, FF_ARRAY_ELEMS(too_many),
+              NULL, 0, 64, 64) == AVERROR(E2BIG),
+          "more than eight normalized detector regions accepted");
+    return 0;
+}
+
+static int test_normalized_detector_order_is_retained(void)
+{
+    const AVRegionOfInterest detector_regions[] = {
+        {
+            .self_size = sizeof(AVRegionOfInterest),
+            .top = 0, .bottom = 16, .left = 0, .right = 16,
+            .qoffset = { -1, 8 },
+        },
+        {
+            .self_size = sizeof(AVRegionOfInterest),
+            .top = 0, .bottom = 16, .left = 32, .right = 48,
+            .qoffset = { -1, 2 },
+        },
+    };
+    AVRegionOfInterest regions[FF_FRAME_DECISION_ROI_MAX_REGIONS];
+    int count;
+
+    count = ff_frame_decision_roi_compose_normalized(
+        regions, NULL, detector_regions,
+        FF_ARRAY_ELEMS(detector_regions), NULL, 0, 64, 64);
+    CHECK(count == 2 && regions[0].left == 0 && regions[1].left == 32,
+          "pre-sorted detector snapshot order was changed");
+    return 0;
+}
+
 static int test_result_deadline(void)
 {
     CHECK(ff_frame_decision_roi_result_is_fresh(1000000, 1499999, 500),
@@ -363,6 +668,13 @@ int main(void)
     ret |= test_disabled_and_edge_clip();
     ret |= test_exact_target_lookup();
     ret |= test_deterministic_cap();
+    ret |= test_manual_coordinate_conversion();
+    ret |= test_manual_validation();
+    ret |= test_compose_repeated_union_and_qoffset();
+    ret |= test_manual_priority_at_cap();
+    ret |= test_raw_detection_and_manual_compose();
+    ret |= test_normalized_detector_validation();
+    ret |= test_normalized_detector_order_is_retained();
     ret |= test_result_deadline();
     ret |= test_result_deadline_and_reuse_are_independent();
     ret |= test_empty_miss_hold();

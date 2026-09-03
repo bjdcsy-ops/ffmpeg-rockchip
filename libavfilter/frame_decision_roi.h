@@ -31,6 +31,7 @@
 #define FF_FRAME_DECISION_ROI_ALIGNMENT      16
 #define FF_FRAME_DECISION_ROI_TARGET_ID_SIZE 32
 #define FF_FRAME_DECISION_ROI_MAX_TARGETS    16
+#define FF_FRAME_DECISION_ROI_COORDINATE_SCALE 1000000
 
 /**
  * Protocol-independent detector output consumed by the normalizer.
@@ -56,6 +57,21 @@ typedef struct FFFrameDecisionROITargetPolicy {
     FFFrameDecisionROITarget targets[FF_FRAME_DECISION_ROI_MAX_TARGETS];
     int nb_targets;
 } FFFrameDecisionROITargetPolicy;
+
+/**
+ * A user-defined ROI rectangle using parts-per-million frame coordinates.
+ * x/y identify the top-left corner; width/height identify its extent.
+ * roi_id belongs to the control-plane snapshot contract and is not used when
+ * composing regions.
+ */
+typedef struct FFFrameDecisionROIManualRegion {
+    char roi_id[FF_FRAME_DECISION_ROI_TARGET_ID_SIZE];
+    uint32_t x;
+    uint32_t y;
+    uint32_t width;
+    uint32_t height;
+    AVRational qoffset;
+} FFFrameDecisionROIManualRegion;
 
 typedef struct FFFrameDecisionROINormalizeStats {
     int rejected;
@@ -95,6 +111,45 @@ int ff_frame_decision_roi_normalize(
     FFFrameDecisionROINormalizeStats *stats,
     const FFFrameDecisionROIDetection *detections, int nb_detections,
     const FFFrameDecisionROITargetPolicy *policy,
+    int frame_width, int frame_height);
+
+/**
+ * Normalize detector output and compose it with user-defined regions.
+ *
+ * Manual origins must be smaller than FF_FRAME_DECISION_ROI_COORDINATE_SCALE
+ * and their positive extents must end at or before that boundary.  Invalid
+ * inputs are rejected individually and a zero qoffset disables a manual
+ * region.  Manual regions sort ahead of detector regions and are ordered by
+ * absolute qoffset, then input order.  Detector ordering retains the existing
+ * score-weighted normalizer behavior.  Overlaps are repeatedly unioned, using
+ * the lowest qoffset, before the result is capped at
+ * FF_FRAME_DECISION_ROI_MAX_REGIONS.
+ *
+ * @return number of output regions, or a negative AVERROR code
+ */
+int ff_frame_decision_roi_compose(
+    AVRegionOfInterest *regions,
+    FFFrameDecisionROINormalizeStats *stats,
+    const FFFrameDecisionROIDetection *detections, int nb_detections,
+    const FFFrameDecisionROITargetPolicy *policy,
+    const FFFrameDecisionROIManualRegion *manual_regions,
+    int nb_manual_regions,
+    int frame_width, int frame_height);
+
+/**
+ * Compose an already-normalized detector snapshot with user-defined regions.
+ * This is the lightweight per-frame form: both input sets are limited to
+ * FF_FRAME_DECISION_ROI_MAX_REGIONS.  Detector input order is retained;
+ * manual regions sort first and then by absolute qoffset and input order.
+ *
+ * @return number of output regions, or a negative AVERROR code
+ */
+int ff_frame_decision_roi_compose_normalized(
+    AVRegionOfInterest *regions,
+    FFFrameDecisionROINormalizeStats *stats,
+    const AVRegionOfInterest *detector_regions, int nb_detector_regions,
+    const FFFrameDecisionROIManualRegion *manual_regions,
+    int nb_manual_regions,
     int frame_width, int frame_height);
 
 /**

@@ -329,6 +329,7 @@ OBJS-$(CONFIG_FPSCAP_FILTER)                 += vf_fpscap.o
 OBJS-$(CONFIG_FRAME_DECISION_ROI_FILTER)     += vf_frame_decision_roi.o \
                                                 frame_decision_roi.o \
                                                 frame_decision_roi_adapter.o \
+                                                frame_decision_roi_control.o \
                                                 rkrga_common.o
 OBJS-$(CONFIG_FRAMEPACK_FILTER)              += vf_framepack.o
 OBJS-$(CONFIG_FRAMERATE_FILTER)              += vf_framerate.o
@@ -700,6 +701,7 @@ TESTPROGS = drawutils filtfmts formats integral
 
 TESTPROGS-$(CONFIG_DRAWVG_FILTER) += drawvg
 TESTPROGS-$(CONFIG_FRAME_DECISION_ROI_FILTER) += frame_decision_roi
+TESTPROGS-$(CONFIG_FRAME_DECISION_ROI_FILTER) += frame_decision_roi_control
 
 TOOLS-$(CONFIG_LIBZMQ) += zmqsend
 

@@ -360,6 +360,12 @@ if [[ " $* " = *" libavfilter/tests/frame_decision_roi "* ]]; then
     >libavfilter/tests/frame_decision_roi
   chmod 0755 libavfilter/tests/frame_decision_roi
 fi
+if [[ " $* " = *" libavfilter/tests/frame_decision_roi_control "* ]]; then
+  mkdir -p libavfilter/tests
+  printf '#!/usr/bin/env bash\nexit 0\n' \
+    >libavfilter/tests/frame_decision_roi_control
+  chmod 0755 libavfilter/tests/frame_decision_roi_control
+fi
 EOF
 
   chmod 0755 "$SOURCE_DIR/configure" "$case_root/fake-bin/make"

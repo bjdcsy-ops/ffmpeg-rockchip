@@ -33,6 +33,7 @@ typedef struct NormalizedCandidate {
     AVRegionOfInterest roi;
     double priority;
     int order;
+    int manual;
 } NormalizedCandidate;
 
 static int qoffset_is_valid(AVRational qoffset)
@@ -240,6 +241,10 @@ static int compare_candidates(const void *opaque_a, const void *opaque_b)
     const NormalizedCandidate *a = opaque_a;
     const NormalizedCandidate *b = opaque_b;
 
+    if (a->manual > b->manual)
+        return -1;
+    if (a->manual < b->manual)
+        return 1;
     if (a->priority > b->priority)
         return -1;
     if (a->priority < b->priority)
@@ -275,24 +280,164 @@ static int align_up_clipped(int64_t value, int limit)
     return (int)(aligned < limit ? aligned : limit);
 }
 
-int ff_frame_decision_roi_normalize(
+static void merge_candidate_metadata(NormalizedCandidate *a,
+                                     const NormalizedCandidate *b)
+{
+    if (b->manual && !a->manual) {
+        a->manual = 1;
+        a->priority = b->priority;
+        a->order = b->order;
+    } else if (b->manual == a->manual) {
+        if (b->priority > a->priority)
+            a->priority = b->priority;
+        if (b->order < a->order)
+            a->order = b->order;
+    }
+}
+
+static int finalize_candidates(
+    AVRegionOfInterest *regions,
+    FFFrameDecisionROINormalizeStats *stats,
+    NormalizedCandidate *candidates, int nb_candidates,
+    FFFrameDecisionROINormalizeStats *local_stats)
+{
+    int i;
+    int j;
+
+    /*
+     * Restart after every merge.  A rectangular union can overlap a region
+     * which neither original rectangle overlapped, so one forward pass is
+     * insufficient to guarantee the encoder receives disjoint regions.
+     */
+    for (i = 0; i < nb_candidates; i++) {
+        for (j = i + 1; j < nb_candidates; j++) {
+            NormalizedCandidate *a = &candidates[i];
+            const NormalizedCandidate *b = &candidates[j];
+
+            if (!regions_overlap(&a->roi, &b->roi))
+                continue;
+
+            if (b->roi.left < a->roi.left)
+                a->roi.left = b->roi.left;
+            if (b->roi.top < a->roi.top)
+                a->roi.top = b->roi.top;
+            if (b->roi.right > a->roi.right)
+                a->roi.right = b->roi.right;
+            if (b->roi.bottom > a->roi.bottom)
+                a->roi.bottom = b->roi.bottom;
+            if (av_cmp_q(b->roi.qoffset, a->roi.qoffset) < 0)
+                a->roi.qoffset = b->roi.qoffset;
+            merge_candidate_metadata(a, b);
+
+            memmove(&candidates[j], &candidates[j + 1],
+                    (nb_candidates - j - 1) * sizeof(candidates[0]));
+            nb_candidates--;
+            local_stats->merged++;
+            i = -1;
+            break;
+        }
+    }
+
+    qsort(candidates, nb_candidates, sizeof(candidates[0]),
+          compare_candidates);
+
+    if (nb_candidates > FF_FRAME_DECISION_ROI_MAX_REGIONS) {
+        local_stats->truncated += nb_candidates -
+                                  FF_FRAME_DECISION_ROI_MAX_REGIONS;
+        nb_candidates = FF_FRAME_DECISION_ROI_MAX_REGIONS;
+    }
+
+    for (i = 0; i < nb_candidates; i++)
+        regions[i] = candidates[i].roi;
+    if (stats)
+        *stats = *local_stats;
+
+    return nb_candidates;
+}
+
+static int append_manual_candidates(
+    NormalizedCandidate *candidates, int nb_candidates,
+    FFFrameDecisionROINormalizeStats *stats,
+    const FFFrameDecisionROIManualRegion *manual_regions,
+    int nb_manual_regions, int frame_width, int frame_height)
+{
+    int i;
+
+    for (i = 0; i < nb_manual_regions; i++) {
+        const FFFrameDecisionROIManualRegion *src = &manual_regions[i];
+        const uint64_t right = (uint64_t)src->x + src->width;
+        const uint64_t bottom = (uint64_t)src->y + src->height;
+        int64_t left_px;
+        int64_t top_px;
+        int64_t right_px;
+        int64_t bottom_px;
+
+        if (!qoffset_is_valid(src->qoffset) ||
+            src->x >= FF_FRAME_DECISION_ROI_COORDINATE_SCALE ||
+            src->y >= FF_FRAME_DECISION_ROI_COORDINATE_SCALE ||
+            !src->width || !src->height ||
+            right > FF_FRAME_DECISION_ROI_COORDINATE_SCALE ||
+            bottom > FF_FRAME_DECISION_ROI_COORDINATE_SCALE) {
+            stats->rejected++;
+            continue;
+        }
+        if (!src->qoffset.num) {
+            stats->disabled++;
+            continue;
+        }
+
+        left_px = (uint64_t)src->x * frame_width /
+                  FF_FRAME_DECISION_ROI_COORDINATE_SCALE;
+        top_px = (uint64_t)src->y * frame_height /
+                 FF_FRAME_DECISION_ROI_COORDINATE_SCALE;
+        right_px = ((uint64_t)right * frame_width +
+                    FF_FRAME_DECISION_ROI_COORDINATE_SCALE - 1) /
+                   FF_FRAME_DECISION_ROI_COORDINATE_SCALE;
+        bottom_px = ((uint64_t)bottom * frame_height +
+                     FF_FRAME_DECISION_ROI_COORDINATE_SCALE - 1) /
+                    FF_FRAME_DECISION_ROI_COORDINATE_SCALE;
+
+        candidates[nb_candidates++] = (NormalizedCandidate) {
+            .roi = {
+                .self_size = sizeof(AVRegionOfInterest),
+                .left      = align_down(left_px),
+                .top       = align_down(top_px),
+                .right     = align_up_clipped(right_px, frame_width),
+                .bottom    = align_up_clipped(bottom_px, frame_height),
+                .qoffset   = src->qoffset,
+            },
+            .priority = fabs(av_q2d(src->qoffset)),
+            .order    = i,
+            .manual   = 1,
+        };
+    }
+
+    return nb_candidates;
+}
+
+static int normalize_and_compose(
     AVRegionOfInterest *regions,
     FFFrameDecisionROINormalizeStats *stats,
     const FFFrameDecisionROIDetection *detections, int nb_detections,
     const FFFrameDecisionROITargetPolicy *policy,
+    const FFFrameDecisionROIManualRegion *manual_regions,
+    int nb_manual_regions,
     int frame_width, int frame_height)
 {
-    NormalizedCandidate candidates[FF_FRAME_DECISION_ROI_MAX_DETECTIONS];
+    NormalizedCandidate candidates[FF_FRAME_DECISION_ROI_MAX_DETECTIONS +
+                                   FF_FRAME_DECISION_ROI_MAX_REGIONS];
     FFFrameDecisionROINormalizeStats local_stats = { 0 };
     int nb_candidates = 0;
     int nb_input;
     int i;
-    int j;
 
     if (!regions || !policy || nb_detections < 0 ||
-        (nb_detections && !detections) ||
+        (nb_detections && !detections) || nb_manual_regions < 0 ||
+        (nb_manual_regions && !manual_regions) ||
         frame_width <= 0 || frame_height <= 0)
         return AVERROR(EINVAL);
+    if (nb_manual_regions > FF_FRAME_DECISION_ROI_MAX_REGIONS)
+        return AVERROR(E2BIG);
     if (ff_frame_decision_roi_validate_target_policy(policy) < 0)
         return AVERROR(EINVAL);
 
@@ -346,58 +491,111 @@ int ff_frame_decision_roi_normalize(
         nb_candidates++;
     }
 
-    /*
-     * Restart after every merge.  A rectangular union can overlap a region
-     * which neither original rectangle overlapped, so one forward pass is
-     * insufficient to guarantee the encoder receives disjoint regions.
-     */
-    for (i = 0; i < nb_candidates; i++) {
-        for (j = i + 1; j < nb_candidates; j++) {
-            NormalizedCandidate *a = &candidates[i];
-            const NormalizedCandidate *b = &candidates[j];
+    nb_candidates = append_manual_candidates(
+        candidates, nb_candidates, &local_stats, manual_regions,
+        nb_manual_regions, frame_width, frame_height);
 
-            if (!regions_overlap(&a->roi, &b->roi))
-                continue;
+    return finalize_candidates(regions, stats, candidates, nb_candidates,
+                               &local_stats);
+}
 
-            if (b->roi.left < a->roi.left)
-                a->roi.left = b->roi.left;
-            if (b->roi.top < a->roi.top)
-                a->roi.top = b->roi.top;
-            if (b->roi.right > a->roi.right)
-                a->roi.right = b->roi.right;
-            if (b->roi.bottom > a->roi.bottom)
-                a->roi.bottom = b->roi.bottom;
-            if (av_cmp_q(b->roi.qoffset, a->roi.qoffset) < 0)
-                a->roi.qoffset = b->roi.qoffset;
-            if (b->priority > a->priority)
-                a->priority = b->priority;
-            if (b->order < a->order)
-                a->order = b->order;
+int ff_frame_decision_roi_normalize(
+    AVRegionOfInterest *regions,
+    FFFrameDecisionROINormalizeStats *stats,
+    const FFFrameDecisionROIDetection *detections, int nb_detections,
+    const FFFrameDecisionROITargetPolicy *policy,
+    int frame_width, int frame_height)
+{
+    return normalize_and_compose(regions, stats, detections, nb_detections,
+                                 policy, NULL, 0,
+                                 frame_width, frame_height);
+}
 
-            memmove(&candidates[j], &candidates[j + 1],
-                    (nb_candidates - j - 1) * sizeof(candidates[0]));
-            nb_candidates--;
-            local_stats.merged++;
-            i = -1;
-            break;
+int ff_frame_decision_roi_compose(
+    AVRegionOfInterest *regions,
+    FFFrameDecisionROINormalizeStats *stats,
+    const FFFrameDecisionROIDetection *detections, int nb_detections,
+    const FFFrameDecisionROITargetPolicy *policy,
+    const FFFrameDecisionROIManualRegion *manual_regions,
+    int nb_manual_regions,
+    int frame_width, int frame_height)
+{
+    return normalize_and_compose(regions, stats, detections, nb_detections,
+                                 policy, manual_regions, nb_manual_regions,
+                                 frame_width, frame_height);
+}
+
+int ff_frame_decision_roi_compose_normalized(
+    AVRegionOfInterest *regions,
+    FFFrameDecisionROINormalizeStats *stats,
+    const AVRegionOfInterest *detector_regions, int nb_detector_regions,
+    const FFFrameDecisionROIManualRegion *manual_regions,
+    int nb_manual_regions,
+    int frame_width, int frame_height)
+{
+    NormalizedCandidate candidates[FF_FRAME_DECISION_ROI_MAX_REGIONS * 2];
+    FFFrameDecisionROINormalizeStats local_stats = { 0 };
+    int nb_candidates = 0;
+    int i;
+
+    if (!regions || nb_detector_regions < 0 ||
+        (nb_detector_regions && !detector_regions) ||
+        nb_manual_regions < 0 ||
+        (nb_manual_regions && !manual_regions) ||
+        frame_width <= 0 || frame_height <= 0)
+        return AVERROR(EINVAL);
+    if (nb_detector_regions > FF_FRAME_DECISION_ROI_MAX_REGIONS ||
+        nb_manual_regions > FF_FRAME_DECISION_ROI_MAX_REGIONS)
+        return AVERROR(E2BIG);
+
+    for (i = 0; i < nb_detector_regions; i++) {
+        const AVRegionOfInterest *src = &detector_regions[i];
+        int64_t left;
+        int64_t top;
+        int64_t right;
+        int64_t bottom;
+
+        if (src->self_size != sizeof(*src) ||
+            !qoffset_is_valid(src->qoffset) ||
+            src->right <= src->left || src->bottom <= src->top) {
+            local_stats.rejected++;
+            continue;
         }
+        if (!src->qoffset.num) {
+            local_stats.disabled++;
+            continue;
+        }
+
+        left   = clip_coordinate(src->left,   frame_width);
+        top    = clip_coordinate(src->top,    frame_height);
+        right  = clip_coordinate(src->right,  frame_width);
+        bottom = clip_coordinate(src->bottom, frame_height);
+        if (right <= left || bottom <= top) {
+            local_stats.rejected++;
+            continue;
+        }
+
+        candidates[nb_candidates++] = (NormalizedCandidate) {
+            .roi = {
+                .self_size = sizeof(AVRegionOfInterest),
+                .left      = align_down(left),
+                .top       = align_down(top),
+                .right     = align_up_clipped(right, frame_width),
+                .bottom    = align_up_clipped(bottom, frame_height),
+                .qoffset   = src->qoffset,
+            },
+            /* The worker already sorted this snapshot by detection score. */
+            .priority = 0.0,
+            .order    = i,
+        };
     }
 
-    qsort(candidates, nb_candidates, sizeof(candidates[0]),
-          compare_candidates);
+    nb_candidates = append_manual_candidates(
+        candidates, nb_candidates, &local_stats, manual_regions,
+        nb_manual_regions, frame_width, frame_height);
 
-    if (nb_candidates > FF_FRAME_DECISION_ROI_MAX_REGIONS) {
-        local_stats.truncated += nb_candidates -
-                                 FF_FRAME_DECISION_ROI_MAX_REGIONS;
-        nb_candidates = FF_FRAME_DECISION_ROI_MAX_REGIONS;
-    }
-
-    for (i = 0; i < nb_candidates; i++)
-        regions[i] = candidates[i].roi;
-    if (stats)
-        *stats = local_stats;
-
-    return nb_candidates;
+    return finalize_candidates(regions, stats, candidates, nb_candidates,
+                               &local_stats);
 }
 
 static int timestamp_is_fresh(int64_t timestamp_us, int64_t now_us,

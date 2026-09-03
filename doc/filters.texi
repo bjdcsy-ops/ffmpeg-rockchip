@@ -14713,9 +14713,9 @@ but carrying frames at 30 fps according to its PTS is also limited to 20 fps.
 
 @section frame_decision_roi
 
-Attach dynamic regions of interest from a frame-decision V3 service to
-linear NV12 DRM frames.  The filter is intended for Rockchip MPP decode and
-encode pipelines.
+Compose dynamic detector and managed manual regions of interest on linear
+NV12 DRM frames.  The filter is intended for Rockchip MPP decode and encode
+pipelines.
 
 Detection runs asynchronously.  The media thread submits sampled DMA-BUF
 frames to a worker without waiting for inference, and applies the newest
@@ -14726,6 +14726,20 @@ continues without fresh ROI metadata while the detector daemon or service is
 unavailable.  The configured client shared library and its required ABI
 symbols must be present during filter initialization; a missing or
 incompatible library causes filter graph configuration to fail.
+
+When @option{channel} is set, the filter also connects in the background to
+the Stream Forge ROI control socket.  Each control message atomically replaces
+both the detector target policy and all manual rectangles for that product
+channel.  An empty snapshot clears the managed ROI set.  Losing the control
+connection never blocks video processing: the filter retains the last valid
+snapshot and reconnects in the background.  A changed target set recreates
+only the frame-decision client at a worker boundary; it does not restart the
+filter graph or encoder.
+
+If frame-decision rejects a dynamically selected target set, detector
+submission is suspended for that snapshot while manual regions and video
+continue normally.  A newly committed snapshot or a snapshot replayed after
+a control-server restart triggers one new configuration attempt.
 
 The input must use @code{AV_PIX_FMT_DRM_PRIME} with one linear
 @code{DRM_FORMAT_NV12} object.  AFBC, P010, and other layouts are rejected.
@@ -14744,9 +14758,22 @@ Path to the frame-decision client shared library.  The default is
 Path to the frame-decision V3 Unix socket.  The default is
 @file{/run/frame-decision/frame-decision-v3.sock}.
 
+@item control_socket
+Path to the Stream Forge ROI control Unix socket.  The default is
+@file{/run/stream-forge/roi-control.sock}.  Set it to an empty string to
+disable managed control while retaining the @option{channel} product-to-
+detector mapping.
+
+@item channel
+Stream Forge product channel in the range 1 to 16.  The filter registers this
+number with the ROI control socket and maps it to frame-decision channel 0 to
+15 by subtracting one.  It cannot be used together with @option{channel_id}.
+
 @item channel_id
-Logical detector channel in the range 0 to 15.  It is required when any
-target has a non-zero quantisation offset.
+Legacy raw frame-decision channel in the range 0 to 15.  It is retained for
+standalone and existing command lines, and does not enable Stream Forge
+control.  Either @option{channel} or @option{channel_id} is required when a
+static target has a non-zero quantisation offset.
 
 @item sample_interval_ms
 Minimum interval between detector submissions in milliseconds.  The default
@@ -14794,28 +14821,49 @@ connection.  The service can therefore skip models which cannot produce any
 selected target.  Unknown, duplicate, malformed, or unsupported target
 configurations fail closed instead of falling back to all models.
 
+@item targets
+Short alias for @option{target_qoffsets}.
+
 @item debug_overlay
 If enabled, copy the frame through RGA and draw bright green borders around
 the normalized ROI set.  This development mode changes pixels and adds an RGA
 operation.  It is disabled by default; production mode passes pixel buffers
 through unchanged.
 
+@item dev
+Short alias for @option{debug_overlay}.
+
 @item debug_thickness
 Even border thickness from 2 to 16 pixels used by @option{debug_overlay}.
 The default is 4.
 @end table
 
-@subsection Example
+@subsection Managed example
 
-Decode an H.264 RTSP stream to linear NV12, resize it, protect face/head and
-motor-vehicle targets with different weights, and encode it with Rockchip
-MPP:
+With Stream Forge, the command line only identifies the product channel.  The
+service sends target weights and manual rectangles over the control socket:
+
+@example
+ffmpeg -rtsp_transport tcp -c:v h264_rkmpp -afbc 0 -i input \
+  -vf "scale_rkrga=w=1920:h=1080:format=nv12:async_depth=0,\
+frame_decision_roi=channel=5" \
+  -c:v h264_rkmpp -b:v 4M -an output
+@end example
+
+Add @code{:dev=1} while validating received coordinates.  Development mode
+draws the final composed set, including both detector and manual regions.
+
+@subsection Standalone example
+
+Decode an H.264 RTSP stream to linear NV12, resize it, protect face, head,
+and motor-vehicle targets with different weights, and encode it with
+Rockchip MPP:
 
 @example
 ffmpeg -rtsp_transport tcp -c:v h264_rkmpp -afbc 0 -i input \
   -vf "scale_rkrga=w=1920:h=1080:format=nv12:afbc=0,\
 frame_decision_roi=channel_id=0:\
-target_qoffsets=face_head=-3/20|motor_vehicle=-1/10" \
+targets=face=-3/20|head=-3/20|motor_vehicle=-1/10" \
   -c:v h264_rkmpp -b:v 4M -an output
 @end example
 

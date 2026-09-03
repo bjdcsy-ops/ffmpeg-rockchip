@@ -291,7 +291,10 @@ build_ffmpeg() {
       fate-rkmppenc-roi
     )
     if [ "$target" = rk3588 ]; then
-      make_targets+=(libavfilter/tests/frame_decision_roi)
+      make_targets+=(
+        libavfilter/tests/frame_decision_roi
+        libavfilter/tests/frame_decision_roi_control
+      )
     fi
     LD_LIBRARY_PATH="$DEPS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
       make -j"$(nproc)" \
@@ -299,6 +302,8 @@ build_ffmpeg() {
     if [ "$target" = rk3588 ]; then
       LD_LIBRARY_PATH="$DEPS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
         ./libavfilter/tests/frame_decision_roi
+      LD_LIBRARY_PATH="$DEPS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+        ./libavfilter/tests/frame_decision_roi_control
     fi
     make install
   )
