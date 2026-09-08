@@ -67,7 +67,9 @@ void ff_rtp_send_aac(AVFormatContext *s1, const uint8_t *buff, int size)
         s->timestamp = s->cur_timestamp;
     }
 
-    if (size <= max_packet_size) {
+    /* With no muxing delay, send this AU immediately rather than buffering it
+     * until the next call. The single-AU path also handles fragmentation. */
+    if (s1->max_delay && size <= max_packet_size) {
         p = s->buf + s->num_frames++ * 2 + 2;
         AV_WB16(p, size * 8);
         memcpy(s->buf_ptr, buff, size);

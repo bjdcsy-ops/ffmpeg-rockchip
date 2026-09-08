@@ -399,6 +399,10 @@ typedef struct RTSPState {
      */
     int rtp_muxer_flags;
 
+    /** Bypass output DTS interleaving after all tracks initialize safely. */
+    int immediate_output;
+    int immediate_streams_ready;
+
     /** Whether the server accepts the x-Dynamic-Rate header */
     int accept_dynamic_rate;
 
@@ -480,6 +484,9 @@ typedef struct RTSPStream {
 
     /** corresponding stream index, if any. -1 if none (MPEG2TS case) */
     int stream_index;
+
+    /** First output packet used the shared timestamp shift. */
+    int immediate_ready;
 
     /** interleave IDs; copies of RTSPTransportField->interleaved_min/max
      * for the selected transport. Only used for TCP. */

@@ -29,6 +29,7 @@
 #include "os_support.h"
 #include "rtsp.h"
 #include "internal.h"
+#include "avformat_internal.h"
 #include "avio_internal.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/avstring.h"
@@ -124,8 +125,26 @@ static int rtsp_write_record(AVFormatContext *s)
     return 0;
 }
 
+static int rtsp_interleave_packet(AVFormatContext *s, AVPacket *pkt,
+                                  int flush, int has_packet)
+{
+    RTSPState *rt = s->priv_data;
+    int ready = rt->immediate_streams_ready == rt->nb_rtsp_streams;
+    int ret;
+
+    /* Preserve startup timestamp selection, then drain every queued packet
+     * before changing callbacks. A lone packet need not flush naturally. */
+    ret = ff_interleave_packet_per_dts(s, pkt, flush || ready, has_packet);
+    if (ready && !ret) {
+        ff_fc_internal(s)->interleave_packet = ff_interleave_packet_passthrough;
+        av_log(s, AV_LOG_VERBOSE, "RTSP immediate output enabled after track initialization\n");
+    }
+    return ret;
+}
+
 static int rtsp_write_header(AVFormatContext *s)
 {
+    RTSPState *rt = s->priv_data;
     int ret;
 
     ret = ff_rtsp_connect(s);
@@ -136,6 +155,11 @@ static int rtsp_write_header(AVFormatContext *s)
         ff_rtsp_close_streams(s);
         ff_rtsp_close_connections(s);
         return AVERROR_INVALIDDATA;
+    }
+    if (rt->immediate_output &&
+        ff_fc_internal(s)->interleave_packet == ff_interleave_packet_per_dts) {
+        rt->immediate_streams_ready = 0;
+        ff_fc_internal(s)->interleave_packet = rtsp_interleave_packet;
     }
     return 0;
 }
@@ -225,6 +249,25 @@ static int rtsp_write_packet(AVFormatContext *s, AVPacket *pkt)
      */
     if (!ret && rt->lower_transport == RTSP_LOWER_TRANSPORT_TCP)
         ret = ff_rtsp_tcp_write_packet(s, rtsp_st);
+    if (!ret && ff_fc_internal(s)->interleave_packet == rtsp_interleave_packet &&
+        !rtsp_st->immediate_ready) {
+        int64_t offset;
+
+        /* pkt already includes the outer muxer's shared shift. A late
+         * negative first DTS can otherwise make the RTP muxer shift only
+         * that track; retain normal interleaving in that case. */
+        if (pkt->dts == AV_NOPTS_VALUE || pkt->dts < 0 ||
+            ffformatcontext(s)->avoid_negative_ts_status == AVOID_NEGATIVE_TS_UNKNOWN ||
+            ffformatcontext(rtpctx)->avoid_negative_ts_status == AVOID_NEGATIVE_TS_UNKNOWN ||
+            ff_get_muxer_ts_offset(rtpctx, 0, &offset) < 0 || offset) {
+            ff_fc_internal(s)->interleave_packet = ff_interleave_packet_per_dts;
+            av_log(s, AV_LOG_VERBOSE,
+                   "RTSP immediate output kept DTS interleaving: unsafe initial timestamps\n");
+        } else {
+            rtsp_st->immediate_ready = 1;
+            rt->immediate_streams_ready++;
+        }
+    }
     return ret;
 }
 
