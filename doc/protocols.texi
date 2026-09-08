@@ -1270,6 +1270,17 @@ line, or set in code via @code{AVOption}s or in
 The following options are supported.
 
 @table @option
+@item rtsp_immediate
+Send packets without waiting for cross-stream DTS interleaving once all tracks
+have initialized. Default is 0 (disabled). Intended for paced, real-time RTSP
+output; it does not change RTP packetization or TCP channel framing.
+
+Startup uses normal interleaving. The muxer drains that queue before switching
+and retains normal interleaving if an initial timestamp is unsafe or an RTP
+child muxer applies a separate timestamp shift. A missing track prevents the
+switch. Single-track output already uses passthrough. This option changes
+cross-track send order and does not correct source clock or RTCP mapping errors.
+
 @item rtsp_transport
 Set RTSP transport protocols.
 

@@ -10,6 +10,11 @@ FATE_LIBAVFORMAT-$(CONFIG_FFRTMPCRYPT_PROTOCOL) += fate-rtmpdh
 fate-rtmpdh: libavformat/tests/rtmpdh$(EXESUF)
 fate-rtmpdh: CMD = run libavformat/tests/rtmpdh$(EXESUF)
 
+FATE_LIBAVFORMAT-$(CONFIG_RTP_MUXER) += fate-rtpenc-aac
+fate-rtpenc-aac: libavformat/tests/rtpenc_aac$(EXESUF)
+fate-rtpenc-aac: CMD = run libavformat/tests/rtpenc_aac$(EXESUF)
+fate-rtpenc-aac: CMP = null
+
 FATE_LIBAVFORMAT-$(CONFIG_SRTP) += fate-srtp
 fate-srtp: libavformat/tests/srtp$(EXESUF)
 fate-srtp: CMD = run libavformat/tests/srtp$(EXESUF)
