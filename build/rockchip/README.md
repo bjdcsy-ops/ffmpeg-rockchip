@@ -84,7 +84,7 @@ ARM64。宿主机只负责启动容器，不会直接编译 FFmpeg。以下命�
 | `build-ffmpeg.sh` | FFmpeg configure 参数、编译安装命令和组件检查 | 增减协议、编解码器、滤镜或编译选项 |
 | `config.sh` | 目标列表、CPU 参数、依赖仓库和缓存键计算 | 新增目标或调整目标参数 |
 | `dependencies.lock` | MPP、RGA 的锁定提交 | 查看当前锁定版本；更新时使用 `tools/update-dependencies.sh` |
-| `patches/mpp-roi-utils-public.patch` | 公开并修正锁定 MPP 的 RK3576/RK3588 ROI 生成接口 | 更新 MPP 或 ROI 后端时重新移植并验证补丁 |
+| `patches/mpp-roi-utils-public.patch` | 公开并修正锁定 MPP 的 RK3588 ROI2 生成接口 | 更新 MPP 或 ROI 后端时重新移植并验证补丁 |
 | `build.sh` | 容器内依赖、缓存、FFmpeg 和交付物构建编排 | 调整构建阶段或执行顺序 |
 | `Dockerfile` | Ubuntu 22.04 ARM64 构建环境和检查工具 | 增减系统依赖或升级工具 |
 

@@ -138,10 +138,13 @@ static AVRegionOfInterest *frame_regions(AVFrame *frame)
     return sd ? (AVRegionOfInterest *)sd->data : NULL;
 }
 
-typedef struct FakeROICtx {
+typedef struct FakeROIMeta {
     RoiRegionCfg regions[FF_RKMPPENC_ROI_MAX_REGIONS];
-    MppEncROIRegion mapped[FF_RKMPPENC_ROI_MAX_REGIONS];
-    MppEncROICfg cfg;
+    int number;
+} FakeROIMeta;
+
+typedef struct FakeROICtx {
+    FakeROIMeta meta;
     int nb_regions;
     int add_calls;
     int setup_calls;
@@ -161,7 +164,6 @@ static MPP_RET fake_roi_init(MppEncRoiCtx *ctx, RK_U32 width, RK_U32 height,
     fake = calloc(1, sizeof(*fake));
     if (!fake)
         return MPP_ERR_MALLOC;
-    fake->cfg.regions = fake->mapped;
     *ctx = fake;
     return MPP_OK;
 }
@@ -181,7 +183,7 @@ static MPP_RET fake_roi_add_region(MppEncRoiCtx ctx, RoiRegionCfg *region)
     if (fake->nb_regions >= FF_RKMPPENC_ROI_MAX_REGIONS)
         return MPP_ERR_VALUE;
 
-    fake->regions[fake->nb_regions++] = *region;
+    fake->meta.regions[fake->nb_regions++] = *region;
     fake->add_calls++;
     return MPP_OK;
 }
@@ -189,31 +191,14 @@ static MPP_RET fake_roi_add_region(MppEncRoiCtx ctx, RoiRegionCfg *region)
 static MPP_RET fake_roi_setup_meta(MppEncRoiCtx ctx, MppMeta meta)
 {
     FakeROICtx *fake = ctx;
-    int i;
 
     if (!fake || !meta)
         return MPP_ERR_NULL_PTR;
 
-    for (i = 0; i < fake->nb_regions; i++) {
-        const RoiRegionCfg *src = &fake->regions[i];
-        MppEncROIRegion *dst = &fake->mapped[i];
-
-        *dst = (MppEncROIRegion) {
-            .x           = src->x,
-            .y           = src->y,
-            .w           = src->w,
-            .h           = src->h,
-            .intra       = src->force_intra,
-            .quality     = src->qp_val,
-            .qp_area_idx = 0,
-            .area_map_en = 1,
-            .abs_qp_en   = src->qp_mode,
-        };
-    }
-    fake->cfg.number = fake->nb_regions;
+    fake->meta.number = fake->nb_regions;
     fake->nb_regions = 0;
     fake->setup_calls++;
-    return mpp_meta_set_ptr(meta, KEY_ROI_DATA, &fake->cfg);
+    return mpp_meta_set_ptr(meta, KEY_ROI_DATA2, &fake->meta);
 }
 
 static const FFRKMPPEncROIOps fake_roi_ops = {
@@ -223,12 +208,12 @@ static const FFRKMPPEncROIOps fake_roi_ops = {
     .setup_meta = fake_roi_setup_meta,
 };
 
-static int get_legacy_cfg(MppFrame frame, MppEncROICfg **cfg)
+static int get_fake_cfg(MppFrame frame, FakeROIMeta **cfg)
 {
     void *ptr = NULL;
     MppMeta meta = mpp_frame_get_meta(frame);
 
-    if (!meta || mpp_meta_get_ptr(meta, KEY_ROI_DATA, &ptr) != MPP_OK || !ptr)
+    if (!meta || mpp_meta_get_ptr(meta, KEY_ROI_DATA2, &ptr) != MPP_OK || !ptr)
         return AVERROR_EXTERNAL;
     *cfg = ptr;
     return 0;
@@ -247,7 +232,7 @@ static int test_side_data_validation(void)
     MppFrame mpp_bad = NULL;
     MppFrame mpp_overlap = NULL;
     MppFrame mpp_cap = NULL;
-    MppEncROICfg *cap_cfg = NULL;
+    FakeROIMeta *cap_cfg = NULL;
     int ret = 1;
 
     bad = make_frame(1920, 1080, 1, -1, 2);
@@ -287,7 +272,7 @@ static int test_side_data_validation(void)
 
     if (ff_rkmppenc_roi_prepare(NULL, &roi, &cap_slot, cap, mpp_cap,
                                 MPP_VIDEO_CodingHEVC) < 0 ||
-        get_legacy_cfg(mpp_cap, &cap_cfg) < 0 ||
+        get_fake_cfg(mpp_cap, &cap_cfg) < 0 ||
         cap_cfg->number != FF_RKMPPENC_ROI_MAX_REGIONS ||
         cap_cfg->regions[FF_RKMPPENC_ROI_MAX_REGIONS - 1].x !=
             32 + (FF_RKMPPENC_ROI_MAX_REGIONS - 1) * 128 ||
@@ -330,9 +315,9 @@ static int test_metadata(void)
     MppFrame mpp2 = NULL;
     MppFrame mpp_clear = NULL;
     MppFrame mpp_plain = NULL;
-    MppEncROICfg *cfg1 = NULL;
-    MppEncROICfg *cfg2 = NULL;
-    MppEncROICfg *cfg_clear = NULL;
+    FakeROIMeta *cfg1 = NULL;
+    FakeROIMeta *cfg2 = NULL;
+    FakeROIMeta *cfg_clear = NULL;
     FakeROICtx *fake1;
     int ret = 1;
 
@@ -361,9 +346,9 @@ static int test_metadata(void)
         ff_rkmppenc_roi_prepare(NULL, &roi, &slot1, frame1, mpp1,
                                 MPP_VIDEO_CodingAVC) < 0 ||
         !roi.metadata_used ||
-        get_legacy_cfg(mpp1, &cfg1) < 0 || cfg1->number != 2 ||
-        cfg1->regions[0].x != 32 || cfg1->regions[0].quality != -26 ||
-        cfg1->regions[1].x != 160 || cfg1->regions[1].quality != 0) {
+        get_fake_cfg(mpp1, &cfg1) < 0 || cfg1->number != 2 ||
+        cfg1->regions[0].x != 32 || cfg1->regions[0].qp_val != -26 ||
+        cfg1->regions[1].x != 160 || cfg1->regions[1].qp_val != 0) {
         fprintf(stderr, "static ROI metadata mapping or order failed\n");
         goto end;
     }
@@ -380,9 +365,9 @@ static int test_metadata(void)
 
     if (ff_rkmppenc_roi_prepare(NULL, &roi, &slot2, frame2, mpp2,
                                 MPP_VIDEO_CodingAVC) < 0 ||
-        get_legacy_cfg(mpp2, &cfg2) < 0 || cfg2->number != 1 ||
-        cfg2->regions[0].quality != 26 || cfg1 == cfg2 ||
-        cfg1->number != 2 || cfg1->regions[0].quality != -26) {
+        get_fake_cfg(mpp2, &cfg2) < 0 || cfg2->number != 1 ||
+        cfg2->regions[0].qp_val != 26 || cfg1 == cfg2 ||
+        cfg1->number != 2 || cfg1->regions[0].qp_val != -26) {
         fprintf(stderr, "per-slot ROI metadata storage is not independent\n");
         goto end;
     }
@@ -390,7 +375,7 @@ static int test_metadata(void)
     slot1.prepared = 0;
     if (ff_rkmppenc_roi_prepare(NULL, &roi, &slot1, clear, mpp_clear,
                                 MPP_VIDEO_CodingAVC) < 0 ||
-        get_legacy_cfg(mpp_clear, &cfg_clear) < 0 ||
+        get_fake_cfg(mpp_clear, &cfg_clear) < 0 ||
         cfg_clear != cfg1 || cfg_clear->number != 0 ||
         fake1->add_calls != 2 || fake1->setup_calls != 2 ||
         cfg2->number != 1) {

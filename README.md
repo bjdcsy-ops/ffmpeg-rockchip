@@ -50,8 +50,8 @@ troubleshooting.
 
 ## Region-of-interest encoding
 
-On RK3588 and RK3576, the FFmpeg 8.1 build supports up to eight regions of
-interest per frame with the `h264_rkmpp` and `hevc_rkmpp` encoders. A negative
+On RK3588, the FFmpeg 8.1 build supports up to eight regions of interest per
+frame with the `h264_rkmpp` and `hevc_rkmpp` encoders. A negative
 `qoffset` gives a region more quality and a positive value gives it less
 quality. The accepted range is `-1` through `1`.
 
@@ -121,9 +121,9 @@ Overlapping regions are repeatedly merged into their bounding rectangle and
 use the numerically smaller `qoffset`, which preserves the stronger quality
 request. The final set is limited to eight rectangles; managed manual regions
 take priority over detector regions when that limit requires truncation.
-Internally RK3588 uses MPP's ROI2 block-map path, while RK3576 uses the legacy
-eight-region path. Both consume the same AVFrame ROI side-data contract, but
-block alignment can make the exact affected pixel boundary differ.
+Internally RK3588 uses MPP's ROI2 block-map path. Directly overlapping AVFrame
+ROI entries are rejected; the managed filter merges overlaps before attaching
+side data. Block alignment can make the exact affected pixel boundary differ.
 
 ## Codecs and filters
 ### Decoders/Hwaccel

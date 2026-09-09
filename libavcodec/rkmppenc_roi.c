@@ -173,19 +173,18 @@ static int collect_frame_regions(AVCodecContext *avctx,
         }
 
         /*
-         * ROI2 maps can enforce FFmpeg's first-region-wins rule, but the
-         * RK3576 legacy register backend does not document tie-breaking for
-         * equal-priority overlapping rectangles.  Reject overlap so both
-         * supported SoCs have one deterministic contract.
+         * ROI2 first builds a 16x16 map and then folds it into codec CTUs.
+         * Reject overlaps so the result cannot vary with CTU granularity.
          */
         for (j = 0; j < i; j++) {
             if (roi_regions_overlap(&regions[j], &regions[i])) {
                 av_log(avctx, AV_LOG_ERROR,
-                       "Overlapping ROI regions %d and %d are not supported "
-                       "consistently by RKMPP hardware.\n", j, i);
+                       "Overlapping ROI regions %d and %d are not "
+                       "supported.\n", j, i);
                 return AVERROR(EINVAL);
             }
         }
+
     }
 
     *nb_regions = count;
@@ -287,7 +286,7 @@ int ff_rkmppenc_roi_prepare(AVCodecContext *avctx,
                                 coding_type, ops)) < 0)
         return ret;
 
-    /* Overlap was rejected above, so both MPP backends see the same set. */
+    /* Preserve side-data order when generating the RK3588 ROI2 map. */
     for (i = 0; i < nb_regions; i++) {
         MPP_RET mpp_ret = ops->add_region(roi_frame->mpp_roi, &regions[i]);
         if (mpp_ret != MPP_OK) {
