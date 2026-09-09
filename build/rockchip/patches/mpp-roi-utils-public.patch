@@ -24,8 +24,40 @@ index cdf4aaf..342e3f0 100644
      )
  
  set(MPP_VERSION "0")
+diff --git a/mpp/hal/rkenc/h264e/hal_h264e_vepu580.c b/mpp/hal/rkenc/h264e/hal_h264e_vepu580.c
+index 81acaf2..523e6d3 100644
+--- a/mpp/hal/rkenc/h264e/hal_h264e_vepu580.c
++++ b/mpp/hal/rkenc/h264e/hal_h264e_vepu580.c
+@@ -1284,2 +1284,10 @@ static void setup_vepu580_rc_base(HalVepu580RegSet *regs, HalH264eVepu580Ctx *ct
+     regs->reg_rc_klut.roi_qthd3.qpmax_area7    = qp_max;
++
++    if (ctx->roi_data &&
++        ((MppEncROICfg2 *)ctx->roi_data)->roi_qp_en) {
++        /* Keep background RC bounds while allowing ROI QP adjustment. */
++        regs->reg_rc_klut.roi_qthd0.qpmin_area1 = 0;
++        regs->reg_rc_klut.roi_qthd0.qpmax_area1 = 51;
++    }
++
+     regs->reg_rc_klut.roi_qthd3.qpmap_mode     = qpmap_mode;
+diff --git a/mpp/hal/rkenc/h265e/hal_h265e_vepu580.c b/mpp/hal/rkenc/h265e/hal_h265e_vepu580.c
+index f4fbe1b..b07afc9 100644
+--- a/mpp/hal/rkenc/h265e/hal_h265e_vepu580.c
++++ b/mpp/hal/rkenc/h265e/hal_h265e_vepu580.c
+@@ -1973,2 +1973,12 @@ static MPP_RET vepu580_h265_set_rc_regs(H265eV580HalContext *ctx, H265eV580RegSe
+     reg_rc->roi_qthd3.qpmax_area7 = h265->qpmax_map[7] > 0 ? h265->qpmax_map[7] : rc_cfg->quality_max;
++
++    if (ctx->frm->roi_data &&
++        ((MppEncROICfg2 *)ctx->frm->roi_data)->roi_qp_en) {
++        /* Preserve explicitly configured per-area bounds. */
++        if (!h265->qpmin_map[1])
++            reg_rc->roi_qthd0.qpmin_area1 = 0;
++        if (!h265->qpmax_map[1])
++            reg_rc->roi_qthd0.qpmax_area1 = 51;
++    }
++
+     reg_rc->roi_qthd3.qpmap_mode  = h265->qpmap_mode;
 diff --git a/utils/mpp_enc_roi_utils.c b/utils/mpp_enc_roi_utils.c
-index bf1bb68..edb96d2 100644
+index bf1bb68..f98682e 100644
 --- a/utils/mpp_enc_roi_utils.c
 +++ b/utils/mpp_enc_roi_utils.c
 @@ -252,13 +252,17 @@ static MPP_RET gen_vepu54x_roi(MppEncRoiImpl *ctx, Vepu541RoiCfg *dst)
@@ -49,7 +81,7 @@ index bf1bb68..edb96d2 100644
              (!region->qp_mode && (region->qp_val > 51 || region->qp_val < -51)))
              ret = MPP_NOK;
  
-@@ -273,22 +277,24 @@ static MPP_RET gen_vepu54x_roi(MppEncRoiImpl *ctx, Vepu541RoiCfg *dst)
+@@ -273,26 +277,28 @@ static MPP_RET gen_vepu54x_roi(MppEncRoiImpl *ctx, Vepu541RoiCfg *dst)
      }
  
      region = ctx->regions;
@@ -87,6 +119,11 @@ index bf1bb68..edb96d2 100644
  
          cfg.force_intra = region->force_intra;
          cfg.reserved    = 0;
+-        cfg.qp_area_idx = 0;
++        cfg.qp_area_idx = ctx->roi_type == ROI_TYPE_2 ? 1 : 0;
+         // NOTE: When roi is enabled the qp_area_en should be one.
+         cfg.qp_area_en  = 1; // region->area_map_en;
+         cfg.qp_adj      = region->qp_val;
 @@ -299,22 +305,23 @@ static MPP_RET gen_vepu54x_roi(MppEncRoiImpl *ctx, Vepu541RoiCfg *dst)
          cfg.qp_adj_mode = region->qp_mode;
  
