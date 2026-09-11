@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "name": "rk3588-spatial-cross-over",
+  "frame": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30
+  },
+  "gop_frames": 60,
+  "repeat_hz": 10,
+  "target_bitrate_bps": 4000000,
+  "probes": {
+    "A": {
+      "x": 128,
+      "y": 320,
+      "w": 384,
+      "h": 384
+    },
+    "N": {
+      "x": 768,
+      "y": 320,
+      "w": 384,
+      "h": 384
+    },
+    "B": {
+      "x": 1408,
+      "y": 320,
+      "w": 384,
+      "h": 384
+    }
+  },
+  "thresholds": {
+    "min_boost_absolute_psnr_y_db": 0.5,
+    "min_reduce_absolute_psnr_y_db": 0.5,
+    "boost_vs_neutral_psnr_y_db": 1.0,
+    "neutral_vs_reduce_psnr_y_db": 1.0,
+    "max_cbr_size_delta_ratio": 0.10,
+    "max_cbr_target_delta_ratio": 0.10,
+    "max_clear_absolute_psnr_y_db": 1.0,
+    "max_clear_spatial_psnr_y_db": 0.5,
+    "max_final_clear_residual_psnr_y_db": 1.0
+  },
+  "phases": [
+    {
+      "name": "warmup-clear",
+      "start_frame": 0,
+      "end_frame": 120,
+      "regions": [],
+      "measure": {
+        "start_frame": 60,
+        "end_frame": 120,
+        "clear_probes": [
+          "A",
+          "N",
+          "B"
+        ]
+      }
+    },
+    {
+      "name": "boost-a-reduce-b",
+      "start_frame": 120,
+      "end_frame": 360,
+      "regions": [
+        {
+          "x": 64,
+          "y": 256,
+          "w": 512,
+          "h": 512,
+          "qoffset": -0.5
+        },
+        {
+          "x": 1344,
+          "y": 256,
+          "w": 512,
+          "h": 512,
+          "qoffset": 0.5
+        }
+      ],
+      "measure": {
+        "start_frame": 180,
+        "end_frame": 360,
+        "boost_probe": "A",
+        "neutral_probe": "N",
+        "reduce_probe": "B"
+      }
+    },
+    {
+      "name": "boost-b-reduce-a",
+      "start_frame": 360,
+      "end_frame": 600,
+      "regions": [
+        {
+          "x": 64,
+          "y": 256,
+          "w": 512,
+          "h": 512,
+          "qoffset": 0.5
+        },
+        {
+          "x": 1344,
+          "y": 256,
+          "w": 512,
+          "h": 512,
+          "qoffset": -0.5
+        }
+      ],
+      "measure": {
+        "start_frame": 420,
+        "end_frame": 600,
+        "boost_probe": "B",
+        "neutral_probe": "N",
+        "reduce_probe": "A"
+      }
+    },
+    {
+      "name": "final-clear",
+      "start_frame": 600,
+      "end_frame": 720,
+      "regions": [],
+      "measure": {
+        "start_frame": 660,
+        "end_frame": 720,
+        "final_clear_probes": [
+          "A",
+          "B"
+        ]
+      }
+    }
+  ]
+}

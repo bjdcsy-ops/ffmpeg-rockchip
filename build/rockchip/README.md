@@ -113,6 +113,10 @@ FFmpeg 的 configure、make、ROI 无硬件测试和 install 命令集中在
 | `tools/test-build-state.sh` | 无网络验证依赖哈希边界、RGA 环境隔离和 FFmpeg stamp 状态迁移 |
 | `tools/update-dependencies.sh` | 查询维护分支并更新依赖锁文件 |
 
+需要在 RK3588 真机上量化 Unix socket 动态 ROI 的画质变化时，使用
+[`tests/roi/`](tests/roi/README.md) 中的假 YOLO A/B 验收流程。该流程依赖完整
+的系统 FFmpeg 生成参考源和计算区域指标，不会扩大运行时交付物的组件集合。
+
 目录外还有两个相关入口：
 
 | 文件 | 作用 |

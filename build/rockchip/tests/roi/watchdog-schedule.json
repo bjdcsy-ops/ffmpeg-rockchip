@@ -1,0 +1,552 @@
+{
+  "schema_version": 1,
+  "name": "rk3588-watchdog-moving-roi",
+  "frame": {
+    "width": 1920,
+    "height": 1080,
+    "fps": 30
+  },
+  "gop_frames": 60,
+  "repeat_hz": 10,
+  "target_bitrate_bps": 4000000,
+  "watchdog": {
+    "timeout_ms": 400,
+    "min_clear_delay_ms": 400,
+    "max_clear_delay_ms": 500,
+    "max_resume_forward_ms": 100
+  },
+  "probes": {
+    "A": {
+      "x": 128,
+      "y": 320,
+      "w": 384,
+      "h": 384
+    },
+    "N": {
+      "x": 768,
+      "y": 320,
+      "w": 384,
+      "h": 384
+    },
+    "B": {
+      "x": 1408,
+      "y": 320,
+      "w": 384,
+      "h": 384
+    }
+  },
+  "thresholds": {
+    "min_active_absolute_psnr_y_db": 0.25,
+    "min_active_vs_neutral_psnr_y_db": 0.5,
+    "min_active_ssim_y": 0.0005,
+    "max_watchdog_spatial_residual_psnr_y_db": 0.5,
+    "max_watchdog_spatial_residual_fraction": 0.2,
+    "max_final_clear_spatial_residual_psnr_y_db": 0.5,
+    "max_final_clear_spatial_residual_fraction": 0.2,
+    "max_cbr_size_delta_ratio": 0.1,
+    "max_cbr_target_delta_ratio": 0.1
+  },
+  "phases": [
+    {
+      "name": "warmup-clear",
+      "start_frame": 0,
+      "end_frame": 120,
+      "updates": [
+        {
+          "frame": 0,
+          "regions": []
+        }
+      ],
+      "measure": {
+        "start_frame": 60,
+        "end_frame": 120,
+        "clear_probes": [
+          "A",
+          "N",
+          "B"
+        ]
+      }
+    },
+    {
+      "name": "moving-a",
+      "start_frame": 120,
+      "end_frame": 300,
+      "updates": [
+        {
+          "frame": 120,
+          "regions": [
+            {
+              "x": 64,
+              "y": 256,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 132,
+          "regions": [
+            {
+              "x": 80,
+              "y": 256,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 144,
+          "regions": [
+            {
+              "x": 80,
+              "y": 272,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 156,
+          "regions": [
+            {
+              "x": 64,
+              "y": 272,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 168,
+          "regions": [
+            {
+              "x": 64,
+              "y": 256,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 180,
+          "regions": [
+            {
+              "x": 80,
+              "y": 256,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 192,
+          "regions": [
+            {
+              "x": 80,
+              "y": 272,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 204,
+          "regions": [
+            {
+              "x": 64,
+              "y": 272,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 216,
+          "regions": [
+            {
+              "x": 64,
+              "y": 256,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 228,
+          "regions": [
+            {
+              "x": 80,
+              "y": 256,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 240,
+          "regions": [
+            {
+              "x": 80,
+              "y": 272,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 252,
+          "regions": [
+            {
+              "x": 64,
+              "y": 272,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 264,
+          "regions": [
+            {
+              "x": 64,
+              "y": 256,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 276,
+          "regions": [
+            {
+              "x": 80,
+              "y": 256,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 288,
+          "regions": [
+            {
+              "x": 80,
+              "y": 272,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        }
+      ],
+      "measure": {
+        "start_frame": 180,
+        "end_frame": 300,
+        "boost_probe": "A",
+        "neutral_probe": "N"
+      }
+    },
+    {
+      "name": "watchdog-silent",
+      "start_frame": 300,
+      "end_frame": 540,
+      "silent": true,
+      "measure": {
+        "start_frame": 390,
+        "end_frame": 540,
+        "clear_probes": [
+          "A",
+          "N",
+          "B"
+        ]
+      }
+    },
+    {
+      "name": "moving-b",
+      "start_frame": 540,
+      "end_frame": 780,
+      "updates": [
+        {
+          "frame": 540,
+          "regions": [
+            {
+              "x": 1344,
+              "y": 256,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 552,
+          "regions": [
+            {
+              "x": 1360,
+              "y": 256,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 564,
+          "regions": [
+            {
+              "x": 1360,
+              "y": 272,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 576,
+          "regions": [
+            {
+              "x": 1344,
+              "y": 272,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 588,
+          "regions": [
+            {
+              "x": 1344,
+              "y": 256,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 600,
+          "regions": [
+            {
+              "x": 1360,
+              "y": 256,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 612,
+          "regions": [
+            {
+              "x": 1360,
+              "y": 272,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 624,
+          "regions": [
+            {
+              "x": 1344,
+              "y": 272,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 636,
+          "regions": [
+            {
+              "x": 1344,
+              "y": 256,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 648,
+          "regions": [
+            {
+              "x": 1360,
+              "y": 256,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 660,
+          "regions": [
+            {
+              "x": 1360,
+              "y": 272,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 672,
+          "regions": [
+            {
+              "x": 1344,
+              "y": 272,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 684,
+          "regions": [
+            {
+              "x": 1344,
+              "y": 256,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 696,
+          "regions": [
+            {
+              "x": 1360,
+              "y": 256,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 708,
+          "regions": [
+            {
+              "x": 1360,
+              "y": 272,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 720,
+          "regions": [
+            {
+              "x": 1344,
+              "y": 272,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 732,
+          "regions": [
+            {
+              "x": 1344,
+              "y": 256,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 744,
+          "regions": [
+            {
+              "x": 1360,
+              "y": 256,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 756,
+          "regions": [
+            {
+              "x": 1360,
+              "y": 272,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        },
+        {
+          "frame": 768,
+          "regions": [
+            {
+              "x": 1344,
+              "y": 272,
+              "w": 512,
+              "h": 512,
+              "qoffset": -0.25
+            }
+          ]
+        }
+      ],
+      "measure": {
+        "start_frame": 600,
+        "end_frame": 780,
+        "boost_probe": "B",
+        "neutral_probe": "N"
+      }
+    },
+    {
+      "name": "final-clear",
+      "start_frame": 780,
+      "end_frame": 900,
+      "updates": [
+        {
+          "frame": 780,
+          "regions": []
+        }
+      ],
+      "measure": {
+        "start_frame": 840,
+        "end_frame": 900,
+        "clear_probes": [
+          "A",
+          "N",
+          "B"
+        ]
+      }
+    }
+  ]
+}

@@ -12,6 +12,7 @@ scripts=(
   "$REPOSITORY_ROOT/build-rockchip.sh"
   "$ROCKCHIP_BUILD_DIR"/*.sh
   "$ROCKCHIP_BUILD_DIR/lib"/*.sh
+  "$ROCKCHIP_BUILD_DIR/tests/roi"/*.sh
   "$TOOLS_DIR"/*.sh
 )
 
@@ -43,5 +44,48 @@ done < <(
 )
 
 "$TOOLS_DIR/test-build-state.sh"
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 "$ROCKCHIP_BUILD_DIR/tests/roi/fake-yolo.py" --self-test
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 "$ROCKCHIP_BUILD_DIR/tests/roi/fake-yolo.py" \
+    --validate-schedule \
+    "$ROCKCHIP_BUILD_DIR/tests/roi/effect-schedule.json"
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 "$ROCKCHIP_BUILD_DIR/tests/roi/analyze.py" --self-test
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 "$ROCKCHIP_BUILD_DIR/tests/roi/fake-yolo.py" \
+    --validate-schedule \
+    "$ROCKCHIP_BUILD_DIR/tests/roi/production-q15-schedule.json"
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 "$ROCKCHIP_BUILD_DIR/tests/roi/fake-yolo.py" \
+    --validate-schedule \
+    "$ROCKCHIP_BUILD_DIR/tests/roi/production-q25-schedule.json"
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 "$ROCKCHIP_BUILD_DIR/tests/roi/analyze-production.py" --self-test
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 "$ROCKCHIP_BUILD_DIR/tests/roi/analyze-production-repeats.py" --self-test
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 "$ROCKCHIP_BUILD_DIR/tests/roi/analyze-production.py" \
+    --validate-schedules \
+    "$ROCKCHIP_BUILD_DIR/tests/roi/production-q15-schedule.json" \
+    "$ROCKCHIP_BUILD_DIR/tests/roi/production-q25-schedule.json"
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 "$ROCKCHIP_BUILD_DIR/tests/roi/roi-watchdog-bridge.py" --self-test
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 "$ROCKCHIP_BUILD_DIR/tests/roi/fake-yolo-watchdog.py" --self-test
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 "$ROCKCHIP_BUILD_DIR/tests/roi/fake-yolo-watchdog.py" \
+    --validate-schedule \
+    "$ROCKCHIP_BUILD_DIR/tests/roi/watchdog-schedule.json"
+PYTHONDONTWRITEBYTECODE=1 \
+  python3 "$ROCKCHIP_BUILD_DIR/tests/roi/analyze-watchdog.py" --self-test
+python3 -m json.tool \
+  "$ROCKCHIP_BUILD_DIR/tests/roi/effect-schedule.json" >/dev/null
+python3 -m json.tool \
+  "$ROCKCHIP_BUILD_DIR/tests/roi/production-q15-schedule.json" >/dev/null
+python3 -m json.tool \
+  "$ROCKCHIP_BUILD_DIR/tests/roi/production-q25-schedule.json" >/dev/null
+python3 -m json.tool \
+  "$ROCKCHIP_BUILD_DIR/tests/roi/watchdog-schedule.json" >/dev/null
 
 printf 'Rockchip build checks passed.\n'
