@@ -84,7 +84,7 @@ ARM64。宿主机只负责启动容器，不会直接编译 FFmpeg。以下命�
 | `build-ffmpeg.sh` | FFmpeg configure 参数、编译安装命令和组件检查 | 增减协议、编解码器、滤镜或编译选项 |
 | `config.sh` | 目标列表、CPU 参数、依赖仓库和缓存键计算 | 新增目标或调整目标参数 |
 | `dependencies.lock` | MPP、RGA 的锁定提交 | 查看当前锁定版本；更新时使用 `tools/update-dependencies.sh` |
-| `patches/mpp-roi-utils-public.patch` | 公开并修正锁定 MPP 的 RK3588 ROI2 生成接口 | 更新 MPP 或 ROI 后端时重新移植并验证补丁 |
+| `patches/mpp-roi-utils-public.patch` | 公开锁定 MPP 的 ROI 接口；保留 RK3588 ROI2，并支持 RK3576/RV1126B legacy rectangle 后端与 CQP ROI | 更新 MPP 或 ROI 后端时重新移植并验证补丁 |
 | `build.sh` | 容器内依赖、缓存、FFmpeg 和交付物构建编排 | 调整构建阶段或执行顺序 |
 | `Dockerfile` | Ubuntu 22.04 ARM64 构建环境和检查工具 | 增减系统依赖或升级工具 |
 
@@ -113,9 +113,38 @@ FFmpeg 的 configure、make、ROI 无硬件测试和 install 命令集中在
 | `tools/test-build-state.sh` | 无网络验证依赖哈希边界、RGA 环境隔离和 FFmpeg stamp 状态迁移 |
 | `tools/update-dependencies.sh` | 查询维护分支并更新依赖锁文件 |
 
-需要在 RK3588 真机上量化 Unix socket 动态 ROI 的画质变化时，使用
-[`tests/roi/`](tests/roi/README.md) 中的假 YOLO A/B 验收流程。该流程依赖完整
-的系统 FFmpeg 生成参考源和计算区域指标，不会扩大运行时交付物的组件集合。
+[`tests/roi/`](tests/roi/README.md) 保留的是旧 `-roi_socket` 协议的历史验收
+记录和分析脚本。该 encoder 参数已从当前实现删除，旧 `run-*-test.sh`
+不能用于验证当前动态 ROI；`tools/check.sh` 对其中 Python 模块的自检也不代表
+当前真机链路验收通过。
+
+当前动态 ROI 使用 `frame_decision_roi` → frame-decision V3 DMA-BUF 检测 →
+AVFrame ROI metadata → RKMPP encoder。Stream Forge 管理模式通过 SFRO control
+socket 更新 target 权重和手工区域；独立 FFmpeg 使用 `control_socket=`、
+`channel_id` 和当前 bundle 支持的静态 target。参数示例见
+[项目 README 的 ROI 章节](../../README.md#region-of-interest-encoding)。
+
+### 三平台 ROI 后端与验收边界
+
+| 目标 | MPP 后端 | metadata | QP 边界 |
+| --- | --- | --- | --- |
+| `rk3588` | VEPU580 ROI2 block map | `KEY_ROI_DATA2` / `MppEncROICfg2` | 保留现有 ROI2 分区 QP 行为 |
+| `rk3576` | VEPU510 legacy rectangles | `KEY_ROI_DATA` / `MppEncROICfg` | 仅非空 CQP ROI 放开为 0–51；背景 picture QP 固定 |
+| `rv1126b` | VEPU511 legacy rectangles | `KEY_ROI_DATA` / `MppEncROICfg` | 仅非空 CQP ROI 放开为 0–51；背景 picture QP 固定 |
+
+仅明确支持表中的三种 SoC，RV1126B 不等同于 RV1126。三平台编码器的硬件区域
+上限均为 8；直接 AVFrame 输入超限时警告并使用前 8 区。filter 会裁剪、按 16 像素
+网格向外对齐、合并重叠区域并限制为 8 区，最终硬件边界可能受 block 对齐影响。
+直接输入重叠 AVFrame ROI 会被拒绝。
+
+`qoffset` 接受 `[-1,1]`，转换为四舍五入的 `[-51,51]` QP delta。
+RK3576/RV1126B 的 CQP ROI 扩展只在当前帧存在非空 ROI 时生效；无 ROI 帧沿用
+原路径。CBR/AVBR 保留 frame QP 上下限和原 rate-control 行为，ROI delta 可能被
+`qp_min`/`qp_max` 或 I-frame 上下限裁剪，不能将 CQP 的强度结果直接推断为 CBR/AVBR。
+
+当前真机验收应使用新链路，分别检查 H264/HEVC 的固定 ROI、空结果清除、目标筛选、
+实时帧数和 encoder metadata；画质比较使用相同输入和参数，并把 CQP 与 CBR/AVBR
+分开记录。完整参考源生成和区域指标分析可使用系统 FFmpeg，不扩大交付物组件集合。
 
 目录外还有两个相关入口：
 

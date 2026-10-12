@@ -276,15 +276,16 @@ test_rga_environment_isolation() (
 )
 
 test_ffmpeg_stamp_transitions() (
-  local case_root="$TEST_ROOT/ffmpeg-stamp"
-  local configure_log="$TEST_ROOT/ffmpeg-stamp/configure.log"
-  local first_log="$TEST_ROOT/ffmpeg-stamp/first.log"
-  local first_stamp="$TEST_ROOT/ffmpeg-stamp/first.stamp"
-  local fourth_log="$TEST_ROOT/ffmpeg-stamp/fourth.log"
-  local make_log="$TEST_ROOT/ffmpeg-stamp/make.log"
-  local second_log="$TEST_ROOT/ffmpeg-stamp/second.log"
-  local third_log="$TEST_ROOT/ffmpeg-stamp/third.log"
-  local third_stamp="$TEST_ROOT/ffmpeg-stamp/third.stamp"
+  local test_target=$1
+  local case_root="$TEST_ROOT/ffmpeg-stamp-$test_target"
+  local configure_log="$case_root/configure.log"
+  local first_log="$case_root/first.log"
+  local first_stamp="$case_root/first.stamp"
+  local fourth_log="$case_root/fourth.log"
+  local make_log="$case_root/make.log"
+  local second_log="$case_root/second.log"
+  local third_log="$case_root/third.log"
+  local third_stamp="$case_root/third.stamp"
 
   SCRIPT_DIR="$case_root/scripts"
   SOURCE_DIR="$case_root/source"
@@ -373,7 +374,7 @@ EOF
   export ROCKCHIP_TEST_CONFIGURE_LOG="$configure_log"
   export ROCKCHIP_TEST_MAKE_LOG="$make_log"
 
-  export target=rk3588
+  export target=$test_target
   export FRAME_DECISION_SDK_PREFIX="$case_root/frame-decision-sdk"
   export ROCKCHIP_FFMPEG_ARCH=aarch64
   export ROCKCHIP_FFMPEG_CPU=test-cpu
@@ -549,7 +550,9 @@ test_glibc_abi_ceiling() (
 
 test_dependency_input_hash_boundaries
 test_rga_environment_isolation
-test_ffmpeg_stamp_transitions
+test_ffmpeg_stamp_transitions rk3588
+test_ffmpeg_stamp_transitions rk3576
+test_ffmpeg_stamp_transitions rv1126b
 test_internal_artifact_manifest
 test_glibc_abi_ceiling
 

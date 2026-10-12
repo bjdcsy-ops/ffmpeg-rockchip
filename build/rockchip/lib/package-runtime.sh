@@ -466,8 +466,7 @@ Smoke checks:
   ./ffmpeg -filters | grep addroi
 EOF
 
-  if [ "$target" = rk3588 ]; then
-    cat >>"$PACKAGE_DIR/README.txt" <<EOF
+  cat >>"$PACKAGE_DIR/README.txt" <<EOF
 
 The frame_decision_roi filter loads this external client at runtime:
   /opt/frame-decision-service/lib/libframe_decision_client.so.2
@@ -475,11 +474,10 @@ The client and frame-decision daemon are not bundled. Install the matching
 frame-decision-service package before enabling detection. The filter writes
 standard AVFrame ROI side data which the RKMPP encoder consumes directly.
 
-RK3588 frame-decision smoke checks:
+${target} frame-decision smoke checks:
   ./ffmpeg -filters | grep frame_decision_roi
   ./ffmpeg -h filter=frame_decision_roi | grep debug_overlay
 EOF
-  fi
 }
 
 rockchip_generate_artifact_manifest() {
@@ -654,42 +652,38 @@ package_rockchip_runtime() (
     setpts
     vpp_rkrga
   )
-  if [ "$target" = rk3588 ]; then
-    required_filters+=(frame_decision_roi)
-    filter_count=11
-  fi
+  required_filters+=(frame_decision_roi)
+  filter_count=11
   rockchip_verify_component_list \
     "$PACKAGE_DIR/ffmpeg" filters -filters "${required_filters[@]}"
-  if [ "$target" = rk3588 ]; then
-    for option in \
-      sdk_library \
-      socket \
-      control_socket \
-      channel \
-      channel_id \
-      sample_interval_ms \
-      ttl_ms \
-      reuse_ttl_ms \
-      miss_hold_ms \
-      connect_timeout_ms \
-      io_timeout_ms \
-      target_qoffsets \
-      targets \
-      debug_overlay \
-      dev \
-      debug_thickness; do
-      rockchip_verify_filter_option \
-        "$PACKAGE_DIR/ffmpeg" frame_decision_roi "$option"
-      filter_option_count=$((filter_option_count + 1))
-    done
-    for option in \
-      person_qoffset \
-      motor_vehicle_qoffset \
-      non_motor_vehicle_qoffset; do
-      rockchip_verify_filter_option_absent \
-        "$PACKAGE_DIR/ffmpeg" frame_decision_roi "$option"
-    done
-  fi
+  for option in \
+    sdk_library \
+    socket \
+    control_socket \
+    channel \
+    channel_id \
+    sample_interval_ms \
+    ttl_ms \
+    reuse_ttl_ms \
+    miss_hold_ms \
+    connect_timeout_ms \
+    io_timeout_ms \
+    target_qoffsets \
+    targets \
+    debug_overlay \
+    dev \
+    debug_thickness; do
+    rockchip_verify_filter_option \
+      "$PACKAGE_DIR/ffmpeg" frame_decision_roi "$option"
+    filter_option_count=$((filter_option_count + 1))
+  done
+  for option in \
+    person_qoffset \
+    motor_vehicle_qoffset \
+    non_motor_vehicle_qoffset; do
+    rockchip_verify_filter_option_absent \
+      "$PACKAGE_DIR/ffmpeg" frame_decision_roi "$option"
+  done
   printf \
     'FFmpeg component check passed: decoders=19 encoders=4 demuxers=4 muxers=3 filters=%d rtsp_options=1 encoder_options=1 filter_options=%d\n' \
     "$filter_count" "$filter_option_count"

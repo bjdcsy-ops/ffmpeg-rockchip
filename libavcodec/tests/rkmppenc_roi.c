@@ -145,6 +145,8 @@ typedef struct FakeROIMeta {
 
 typedef struct FakeROICtx {
     FakeROIMeta meta;
+    MppEncROICfg legacy_cfg;
+    MppEncROIRegion legacy_regions[FF_RKMPPENC_ROI_MAX_REGIONS];
     int nb_regions;
     int add_calls;
     int setup_calls;
@@ -207,6 +209,29 @@ static const FFRKMPPEncROIOps fake_roi_ops = {
     .add_region = fake_roi_add_region,
     .setup_meta = fake_roi_setup_meta,
 };
+
+static MPP_RET fake_legacy_setup_meta(MppEncRoiCtx ctx, MppMeta meta)
+{
+    FakeROICtx *fake = ctx;
+    int i;
+
+    if (!fake || !meta)
+        return MPP_ERR_NULL_PTR;
+    for (i = 0; i < fake->nb_regions; i++) {
+        const RoiRegionCfg *src = &fake->meta.regions[i];
+
+        fake->legacy_regions[i] = (MppEncROIRegion) {
+            .x = src->x, .y = src->y, .w = src->w, .h = src->h,
+            .intra = src->force_intra, .quality = src->qp_val,
+            .qp_area_idx = 0, .area_map_en = 1, .abs_qp_en = src->qp_mode,
+        };
+    }
+    fake->legacy_cfg.number = fake->nb_regions;
+    fake->legacy_cfg.regions = fake->legacy_regions;
+    fake->nb_regions = 0;
+    fake->setup_calls++;
+    return mpp_meta_set_ptr(meta, KEY_ROI_DATA, &fake->legacy_cfg);
+}
 
 static int get_fake_cfg(MppFrame frame, FakeROIMeta **cfg)
 {
@@ -406,6 +431,68 @@ end:
     return ret;
 }
 
+static int test_legacy_metadata(void)
+{
+    FFRKMPPEncROIOps ops = fake_roi_ops;
+    FFRKMPPEncROIContext roi = { .mpp_ops = &ops };
+    FFRKMPPEncROIFrame slots[2] = { { 0 } };
+    AVFrame *frames[2] = { make_frame(1920, 1080, 2, -1, 2),
+                           make_frame(1920, 1080, 1, 1, 2) };
+    AVFrame *clear = make_frame(1920, 1080, 0, 0, 1);
+    MppFrame mpp_frames[2] = { NULL, NULL };
+    MppFrame mpp_clear = NULL;
+    MppEncROICfg *configs[2] = { NULL, NULL };
+    void *ptr = NULL;
+    int ret = 1, i;
+
+    ops.setup_meta = fake_legacy_setup_meta;
+    if (!frames[0] || !frames[1] || !clear ||
+        ff_rkmppenc_roi_init(NULL, &roi) < 0 ||
+        mpp_frame_init(&mpp_clear) != MPP_OK)
+        goto end;
+    for (i = 0; i < 2; i++) {
+        if (mpp_frame_init(&mpp_frames[i]) != MPP_OK ||
+            ff_rkmppenc_roi_prepare(NULL, &roi, &slots[i], frames[i],
+                                    mpp_frames[i], MPP_VIDEO_CodingHEVC) < 0 ||
+            mpp_meta_get_ptr(mpp_frame_get_meta(mpp_frames[i]), KEY_ROI_DATA,
+                              &ptr) != MPP_OK || !ptr)
+            goto end;
+        configs[i] = ptr;
+    }
+    if (configs[0] == configs[1] || configs[0]->regions == configs[1]->regions ||
+        configs[0]->number != 2 || configs[0]->regions[0].x != 32 ||
+        configs[0]->regions[0].quality != -26 ||
+        configs[0]->regions[0].abs_qp_en || !configs[0]->regions[0].area_map_en ||
+        configs[1]->number != 1 || configs[1]->regions[0].quality != 26) {
+        fprintf(stderr, "legacy ROI metadata mapping or slot ownership failed\n");
+        goto end;
+    }
+    slots[0].prepared = 0;
+    if (ff_rkmppenc_roi_prepare(NULL, &roi, &slots[0], clear, mpp_clear,
+                                MPP_VIDEO_CodingHEVC) < 0 ||
+        mpp_meta_get_ptr(mpp_frame_get_meta(mpp_clear), KEY_ROI_DATA,
+                          &ptr) != MPP_OK || ptr != configs[0] ||
+        configs[0]->number || configs[1]->number != 1 ||
+        configs[1]->regions[0].quality != 26) {
+        fprintf(stderr, "legacy ROI clear leaked across input slots\n");
+        goto end;
+    }
+    ret = 0;
+
+end:
+    for (i = 0; i < 2; i++) {
+        ff_rkmppenc_roi_frame_uninit(&slots[i]);
+        if (mpp_frames[i])
+            mpp_frame_deinit(&mpp_frames[i]);
+        av_frame_free(&frames[i]);
+    }
+    if (mpp_clear)
+        mpp_frame_deinit(&mpp_clear);
+    av_frame_free(&clear);
+    ff_rkmppenc_roi_uninit(NULL, &roi);
+    return ret;
+}
+
 int main(void)
 {
     int ret = 0;
@@ -414,5 +501,6 @@ int main(void)
     ret |= test_mapping();
     ret |= test_side_data_validation();
     ret |= test_metadata();
+    ret |= test_legacy_metadata();
     return ret;
 }

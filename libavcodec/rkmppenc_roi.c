@@ -173,8 +173,8 @@ static int collect_frame_regions(AVCodecContext *avctx,
         }
 
         /*
-         * ROI2 first builds a 16x16 map and then folds it into codec CTUs.
-         * Reject overlaps so the result cannot vary with CTU granularity.
+         * Hardware uses block grids and does not define overlap tie-breaking.
+         * Reject overlapping rectangles consistently across ROI backends.
          */
         for (j = 0; j < i; j++) {
             if (roi_regions_overlap(&regions[j], &regions[i])) {
@@ -286,7 +286,7 @@ int ff_rkmppenc_roi_prepare(AVCodecContext *avctx,
                                 coding_type, ops)) < 0)
         return ret;
 
-    /* Preserve side-data order when generating the RK3588 ROI2 map. */
+    /* Preserve side-data order for both map and register ROI backends. */
     for (i = 0; i < nb_regions; i++) {
         MPP_RET mpp_ret = ops->add_region(roi_frame->mpp_roi, &regions[i]);
         if (mpp_ret != MPP_OK) {

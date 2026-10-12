@@ -9,7 +9,7 @@ index 45a30cc..bf0defb 100644
 +install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/utils/mpp_enc_roi_utils.h
 +        DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/rockchip"
 +        )
- 
+
  # ----------------------------------------------------------------------------
  #  pkgconfig
 diff --git a/mpp/CMakeLists.txt b/mpp/CMakeLists.txt
@@ -22,7 +22,7 @@ index cdf4aaf..342e3f0 100644
      mpi.c
 +    ${PROJECT_SOURCE_DIR}/utils/mpp_enc_roi_utils.c
      )
- 
+
  set(MPP_VERSION "0")
 diff --git a/mpp/hal/rkenc/h264e/hal_h264e_vepu580.c b/mpp/hal/rkenc/h264e/hal_h264e_vepu580.c
 index 81acaf2..523e6d3 100644
@@ -65,7 +65,7 @@ index f4fbe1b..b07afc9 100644
 
      return MPP_OK;
 diff --git a/utils/mpp_enc_roi_utils.c b/utils/mpp_enc_roi_utils.c
-index bf1bb68..05e73a4 100644
+index bf1bb68..02d8a2f 100644
 --- a/utils/mpp_enc_roi_utils.c
 +++ b/utils/mpp_enc_roi_utils.c
 @@ -20,7 +20,6 @@
@@ -95,7 +95,7 @@ index bf1bb68..05e73a4 100644
  typedef struct Vepu541RoiCfg_t {
      /*
       * Force_intra
-@@ -133,21 +120,7 @@ typedef struct MppEncRoiImpl_t {
+@@ -133,21 +120,10 @@ typedef struct MppEncRoiImpl_t {
      RK_S32              max_count;
      RK_S32              count;
 
@@ -110,15 +110,16 @@ index bf1bb68..05e73a4 100644
 -    RoiType             roi_type;
 -
 -    /* For roi type legacy config */
--    MppEncROICfg        legacy_roi_cfg;
++    /* RK3576/RV1126B register ROI config */
+     MppEncROICfg        legacy_roi_cfg;
 -    MppEncROIRegion     *legacy_roi_region;
--
+
 -    /* For roi type 1&2 config */
 +    /* RK3588 ROI2 config */
      MppBufferGroup      roi_grp;
      MppEncROICfg2       roi_cfg;
 
-@@ -186,40 +159,6 @@ static RK_U32 raster2zscan16[16] = {
+@@ -186,40 +162,6 @@ static RK_U32 raster2zscan16[16] = {
      10, 11, 14, 15
  };
 
@@ -159,7 +160,7 @@ index bf1bb68..05e73a4 100644
  static MPP_RET gen_vepu54x_roi(MppEncRoiImpl *ctx, Vepu541RoiCfg *dst)
  {
      RoiRegionCfg *region = ctx->regions;
-@@ -252,13 +191,17 @@ static MPP_RET gen_vepu54x_roi(MppEncRoiImpl *ctx, Vepu541RoiCfg *dst)
+@@ -252,13 +194,17 @@ static MPP_RET gen_vepu54x_roi(MppEncRoiImpl *ctx, Vepu541RoiCfg *dst)
      /* check region config */
      ret = MPP_OK;
      for (i = 0; i < ctx->count; i++, region++) {
@@ -169,20 +170,20 @@ index bf1bb68..05e73a4 100644
 +            region->w > ctx->w - region->x ||
 +            region->h > ctx->h - region->y)
              ret = MPP_NOK;
- 
+
 -        if (region->force_intra > 1 || region->qp_mode > 1)
 +        if (region->force_intra < 0 || region->force_intra > 1 ||
 +            region->qp_mode < 0 || region->qp_mode > 1)
              ret = MPP_NOK;
- 
+
 -        if ((region->qp_mode && region->qp_val > 51) ||
 +        if ((region->qp_mode && (region->qp_val < 0 || region->qp_val > 51)) ||
              (!region->qp_mode && (region->qp_val > 51 || region->qp_val < -51)))
              ret = MPP_NOK;
- 
-@@ -273,48 +216,51 @@ static MPP_RET gen_vepu54x_roi(MppEncRoiImpl *ctx, Vepu541RoiCfg *dst)
+
+@@ -273,48 +219,51 @@ static MPP_RET gen_vepu54x_roi(MppEncRoiImpl *ctx, Vepu541RoiCfg *dst)
      }
- 
+
      region = ctx->regions;
 -    /* step 2. setup region for top to bottom */
 -    for (i = 0; i < ctx->count; i++, region++) {
@@ -205,7 +206,7 @@ index bf1bb68..05e73a4 100644
 +        RK_S32 roi_width  = pos_x_end - pos_x_init;
 +        RK_S32 roi_height = pos_y_end - pos_y_init;
          RK_S32 x, y;
- 
+
 -        mpp_assert(pos_x_init >= 0 && pos_x_init < mb_w);
 -        mpp_assert(pos_x_end  >= 0 && pos_x_end <= mb_w);
 -        mpp_assert(pos_y_init >= 0 && pos_y_init < mb_h);
@@ -215,7 +216,7 @@ index bf1bb68..05e73a4 100644
 +            pos_y_init < 0 || pos_y_init >= mb_h ||
 +            pos_y_end <= pos_y_init || pos_y_end > mb_h)
 +            return MPP_NOK;
- 
+
          cfg.force_intra = region->force_intra;
          cfg.reserved    = 0;
 -        cfg.qp_area_idx = 0;
@@ -224,7 +225,7 @@ index bf1bb68..05e73a4 100644
          cfg.qp_area_en  = 1; // region->area_map_en;
          cfg.qp_adj      = region->qp_val;
          cfg.qp_adj_mode = region->qp_mode;
- 
+
          p += pos_y_init * stride_h + pos_x_init;
 -        map += pos_y_init * stride_h + pos_x_init;
 +        map = map ? map + pos_y_init * stride_h + pos_x_init : NULL;
@@ -235,24 +236,24 @@ index bf1bb68..05e73a4 100644
 +                if (map) {
                      *(map + x) = 1;
                  }
- 
+
              }
              p += stride_h;
 -            map += stride_h;
 +            map = map ? map + stride_h : NULL;
          }
- 
+
          if (ctx->type == MPP_VIDEO_CodingHEVC) {
              map = ctx->cu_map;
              RK_U32 stride_cu64_h = stride_h * 16 / 64;
 +            RK_U32 stride_cu64_v = stride_v * 16 / 64;
- 
+
              roi_width  = (region->w + 64) / 64;
              roi_height = (region->h + 64) / 64;
-@@ -337,6 +283,14 @@ static MPP_RET gen_vepu54x_roi(MppEncRoiImpl *ctx, Vepu541RoiCfg *dst)
+@@ -337,6 +286,14 @@ static MPP_RET gen_vepu54x_roi(MppEncRoiImpl *ctx, Vepu541RoiCfg *dst)
              } else
                  pos_y_init = region->y / 64;
- 
+
 +            if (pos_x_init >= stride_cu64_h ||
 +                pos_y_init >= stride_cu64_v)
 +                return MPP_NOK;
@@ -264,33 +265,32 @@ index bf1bb68..05e73a4 100644
              map += pos_y_init * stride_cu64_h + pos_x_init;
              for (y = 0; y < roi_height; y++) {
                  for (x = 0; x < roi_width; x++) {
-@@ -453,7 +407,7 @@ static void set_roi_qp_cfg(void *buf, RK_U32 index, Vepu541RoiCfg *cfg)
+@@ -453,7 +410,7 @@ static void set_roi_qp_cfg(void *buf, RK_U32 index, Vepu541RoiCfg *cfg)
          set_roi_qp_cfg(buf, offset, cfg); \
      } while(0)
- 
+
 -void set_roi_amv(RK_U32 *buf, Vepu580RoiH265BsCfg val)
 +static void set_roi_amv(RK_U32 *buf, Vepu580RoiH265BsCfg val)
  {
      set_roi_pos_val(buf, 511, val.amv_en);
  }
-@@ -509,7 +463,7 @@ static MPP_RET gen_vepu580_roi_h264(MppEncRoiImpl *ctx)
+@@ -509,7 +466,7 @@ static MPP_RET gen_vepu580_roi_h264(MppEncRoiImpl *ctx)
      return MPP_OK;
  }
- 
+
 -void set_roi_cu16_split_cu8(RK_U32 *buf, RK_U32 cu16index, Vepu580RoiH265BsCfg val)
 +static void set_roi_cu16_split_cu8(RK_U32 *buf, RK_U32 cu16index, Vepu580RoiH265BsCfg val)
  {
      RK_S32 cu16_x = cu16index % 4;
      RK_S32 cu16_y = cu16index / 4;
-@@ -633,28 +587,25 @@ static MPP_RET gen_vepu580_roi_h265(MppEncRoiImpl *ctx)
-
+@@ -634,27 +591,27 @@ static MPP_RET gen_vepu580_roi_h265(MppEncRoiImpl *ctx)
  MPP_RET mpp_enc_roi_init(MppEncRoiCtx *ctx, RK_U32 w, RK_U32 h, MppCodingType type, RK_S32 count)
  {
--    RockchipSocType soc_type = mpp_get_soc_type();
+     RockchipSocType soc_type = mpp_get_soc_type();
 -    RoiType roi_type = ROI_TYPE_AUTO;
      MppEncRoiImpl *impl = NULL;
      MPP_RET ret = MPP_NOK;
- 
+
 -    switch (soc_type) {
 -    case ROCKCHIP_SOC_RV1109 :
 -    case ROCKCHIP_SOC_RV1126 :
@@ -318,15 +318,17 @@ index bf1bb68..05e73a4 100644
 +    if (type != MPP_VIDEO_CodingAVC && type != MPP_VIDEO_CodingHEVC)
 +        return MPP_ERR_VALUE;
 +
-+    if (mpp_get_soc_type() != ROCKCHIP_SOC_RK3588) {
-+        mpp_err("ROI2 is only supported on RK3588, got %s\n",
++    if (soc_type != ROCKCHIP_SOC_RK3588 &&
++        soc_type != ROCKCHIP_SOC_RK3576 &&
++        soc_type != ROCKCHIP_SOC_RV1126B) {
++        mpp_err("ROI is only supported on RK3588/RK3576/RV1126B, got %s\n",
 +                mpp_get_soc_name());
 +        return MPP_ERR_VALUE;
 +    }
- 
+
      impl = mpp_calloc(MppEncRoiImpl, 1);
      if (!impl) {
-@@ -665,117 +616,79 @@ MPP_RET mpp_enc_roi_init(MppEncRoiCtx *ctx, RK_U32 w, RK_U32 h, MppCodingType ty
+@@ -665,117 +622,87 @@ MPP_RET mpp_enc_roi_init(MppEncRoiCtx *ctx, RK_U32 w, RK_U32 h, MppCodingType ty
      impl->w = w;
      impl->h = h;
      impl->type = type;
@@ -335,7 +337,27 @@ index bf1bb68..05e73a4 100644
      impl->regions = mpp_calloc(RoiRegionCfg, count);
 +    if (!impl->regions)
 +        goto done;
-+
+
+-    switch (roi_type) {
+-    case ROI_TYPE_1 : {
+-        RK_S32 mb_w = MPP_ALIGN(impl->w, 16) / 16;
+-        RK_S32 mb_h = MPP_ALIGN(impl->h, 16) / 16;
+-        RK_U32 ctu_w = MPP_ALIGN(impl->w, 64) / 64;
+-        RK_U32 ctu_h  = MPP_ALIGN(impl->w, 64) / 64;
+-        RK_S32 stride_h = MPP_ALIGN(mb_w, 4);
+-        RK_S32 stride_v = MPP_ALIGN(mb_h, 4);
+-
+-        mpp_log("set to vepu54x roi generation\n");
++    if (soc_type != ROCKCHIP_SOC_RK3588) {
++        impl->legacy_roi_cfg.regions = mpp_calloc(MppEncROIRegion, count);
++        if (!impl->legacy_roi_cfg.regions)
++            goto done;
++        ret = MPP_OK;
++        goto done;
++    }
+
+-        impl->base_cfg_size = stride_h * stride_v * sizeof(Vepu541RoiCfg);
+-        mpp_buffer_group_get_internal(&impl->roi_grp, MPP_BUFFER_TYPE_ION | MPP_BUFFER_FLAGS_CACHABLE);
 +    if (type == MPP_VIDEO_CodingHEVC) {
 +        RK_U32 ctu_w = MPP_ALIGN(w, 64) / 64;
 +        RK_U32 ctu_h  = MPP_ALIGN(h, 64) / 64;
@@ -359,9 +381,52 @@ index bf1bb68..05e73a4 100644
 +    }
 +    if (!impl->cu_map)
 +        goto done;
-+
+
+-        mpp_buffer_get(impl->roi_grp, &impl->roi_cfg.base_cfg_buf, impl->base_cfg_size);
+-        if (!impl->roi_cfg.base_cfg_buf) {
+-            goto done;
+-        }
+-        impl->dst_base = mpp_buffer_get_ptr(impl->roi_cfg.base_cfg_buf);
+-
+-        /* create tmp buffer for hevc */
+-        if (type == MPP_VIDEO_CodingHEVC) {
+-            impl->tmp = mpp_malloc(Vepu541RoiCfg, stride_h * stride_v);
+-            impl->cu_map  = mpp_calloc(RK_U8, ctu_w * ctu_h);
+-            impl->cu_size = ctu_w * ctu_h;
+-            if (!impl->tmp || !impl->cu_map)
+-                goto done;
+-        } else {
+-            impl->cu_map   = mpp_calloc(RK_U8, mb_w * mb_h);
+-            impl->cu_size  = mb_w * mb_h;
+-            if (!impl->cu_map)
+-                goto done;
+-        }
 +    mpp_log("set to vepu58x roi generation\n");
-+
+
+-        ret = MPP_OK;
+-    } break;
+-    case ROI_TYPE_2 : {
+-        if (type == MPP_VIDEO_CodingHEVC) {
+-            RK_U32 ctu_w = MPP_ALIGN(w, 64) / 64;
+-            RK_U32 ctu_h  = MPP_ALIGN(h, 64) / 64;
+-
+-            impl->base_cfg_size = ctu_w * ctu_h * 64;
+-            impl->qp_cfg_size   = ctu_w * ctu_h * 256;
+-            impl->amv_cfg_size  = ctu_w * ctu_h * 512;
+-            impl->mv_cfg_size   = ctu_w * ctu_h * 4;
+-            impl->cu_map        = mpp_calloc(RK_U8, ctu_w * ctu_h);
+-            impl->cu_size       = ctu_w * ctu_h;
+-        } else {
+-            RK_U32 mb_w = MPP_ALIGN(w, 64) / 16;
+-            RK_U32 mb_h = MPP_ALIGN(h, 64) / 16;
+-
+-            impl->base_cfg_size = mb_w * mb_h * 8;
+-            impl->qp_cfg_size   = mb_w * mb_h * 2;
+-            impl->amv_cfg_size  = mb_w * mb_h / 4;
+-            impl->mv_cfg_size   = mb_w * mb_h * 96 / 4;
+-            impl->cu_map        = mpp_calloc(RK_U8, mb_w * mb_h);
+-            impl->cu_size       = mb_w * mb_h;
+-        }
 +    impl->roi_cfg.roi_qp_en = 1;
 +    mpp_buffer_group_get_internal(&impl->roi_grp,
 +                                  MPP_BUFFER_TYPE_ION |
@@ -391,77 +456,22 @@ index bf1bb68..05e73a4 100644
 +    impl->dst_mv = mpp_buffer_get_ptr(impl->roi_cfg.mv_cfg_buf);
 +    if (!impl->dst_mv)
 +        goto done;
- 
--    switch (roi_type) {
--    case ROI_TYPE_1 : {
+
+-        mpp_log("set to vepu58x roi generation\n");
 +    {
 +        /* RK3588 ROI2 first builds a vepu54x-format intermediate map. */
-         RK_S32 mb_w = MPP_ALIGN(impl->w, 16) / 16;
-         RK_S32 mb_h = MPP_ALIGN(impl->h, 16) / 16;
--        RK_U32 ctu_w = MPP_ALIGN(impl->w, 64) / 64;
--        RK_U32 ctu_h  = MPP_ALIGN(impl->w, 64) / 64;
-         RK_S32 stride_h = MPP_ALIGN(mb_w, 4);
-         RK_S32 stride_v = MPP_ALIGN(mb_h, 4);
- 
--        mpp_log("set to vepu54x roi generation\n");
--
--        impl->base_cfg_size = stride_h * stride_v * sizeof(Vepu541RoiCfg);
++        RK_S32 mb_w = MPP_ALIGN(impl->w, 16) / 16;
++        RK_S32 mb_h = MPP_ALIGN(impl->h, 16) / 16;
++        RK_S32 stride_h = MPP_ALIGN(mb_w, 4);
++        RK_S32 stride_v = MPP_ALIGN(mb_h, 4);
+
+-        impl->roi_cfg.roi_qp_en = 1;
 -        mpp_buffer_group_get_internal(&impl->roi_grp, MPP_BUFFER_TYPE_ION | MPP_BUFFER_FLAGS_CACHABLE);
--
 -        mpp_buffer_get(impl->roi_grp, &impl->roi_cfg.base_cfg_buf, impl->base_cfg_size);
 -        if (!impl->roi_cfg.base_cfg_buf) {
 +        impl->tmp = mpp_malloc(Vepu541RoiCfg, stride_h * stride_v);
 +        if (!impl->tmp)
              goto done;
--        }
--        impl->dst_base = mpp_buffer_get_ptr(impl->roi_cfg.base_cfg_buf);
--
--        /* create tmp buffer for hevc */
--        if (type == MPP_VIDEO_CodingHEVC) {
--            impl->tmp = mpp_malloc(Vepu541RoiCfg, stride_h * stride_v);
--            impl->cu_map  = mpp_calloc(RK_U8, ctu_w * ctu_h);
--            impl->cu_size = ctu_w * ctu_h;
--            if (!impl->tmp || !impl->cu_map)
--                goto done;
--        } else {
--            impl->cu_map   = mpp_calloc(RK_U8, mb_w * mb_h);
--            impl->cu_size  = mb_w * mb_h;
--            if (!impl->cu_map)
--                goto done;
--        }
--
--        ret = MPP_OK;
--    } break;
--    case ROI_TYPE_2 : {
--        if (type == MPP_VIDEO_CodingHEVC) {
--            RK_U32 ctu_w = MPP_ALIGN(w, 64) / 64;
--            RK_U32 ctu_h  = MPP_ALIGN(h, 64) / 64;
--
--            impl->base_cfg_size = ctu_w * ctu_h * 64;
--            impl->qp_cfg_size   = ctu_w * ctu_h * 256;
--            impl->amv_cfg_size  = ctu_w * ctu_h * 512;
--            impl->mv_cfg_size   = ctu_w * ctu_h * 4;
--            impl->cu_map        = mpp_calloc(RK_U8, ctu_w * ctu_h);
--            impl->cu_size       = ctu_w * ctu_h;
--        } else {
--            RK_U32 mb_w = MPP_ALIGN(w, 64) / 16;
--            RK_U32 mb_h = MPP_ALIGN(h, 64) / 16;
--
--            impl->base_cfg_size = mb_w * mb_h * 8;
--            impl->qp_cfg_size   = mb_w * mb_h * 2;
--            impl->amv_cfg_size  = mb_w * mb_h / 4;
--            impl->mv_cfg_size   = mb_w * mb_h * 96 / 4;
--            impl->cu_map        = mpp_calloc(RK_U8, mb_w * mb_h);
--            impl->cu_size       = mb_w * mb_h;
--        }
--
--        mpp_log("set to vepu58x roi generation\n");
--
--        impl->roi_cfg.roi_qp_en = 1;
--        mpp_buffer_group_get_internal(&impl->roi_grp, MPP_BUFFER_TYPE_ION | MPP_BUFFER_FLAGS_CACHABLE);
--        mpp_buffer_get(impl->roi_grp, &impl->roi_cfg.base_cfg_buf, impl->base_cfg_size);
--        if (!impl->roi_cfg.base_cfg_buf) {
--            goto done;
 -        }
 -        impl->dst_base = mpp_buffer_get_ptr(impl->roi_cfg.base_cfg_buf);
 -        mpp_buffer_get(impl->roi_grp, &impl->roi_cfg.qp_cfg_buf, impl->qp_cfg_size);
@@ -507,18 +517,19 @@ index bf1bb68..05e73a4 100644
 
  done:
      if (ret) {
-@@ -819,7 +732,6 @@ MPP_RET mpp_enc_roi_deinit(MppEncRoiCtx ctx)
+@@ -819,7 +746,7 @@ MPP_RET mpp_enc_roi_deinit(MppEncRoiCtx ctx)
          impl->roi_grp = NULL;
      }
      MPP_FREE(impl->cu_map);
 -    MPP_FREE(impl->legacy_roi_region);
++    MPP_FREE(impl->legacy_roi_cfg.regions);
      MPP_FREE(impl->regions);
      MPP_FREE(impl->tmp);
 
-@@ -831,11 +743,24 @@ MPP_RET mpp_enc_roi_add_region(MppEncRoiCtx ctx, RoiRegionCfg *region)
+@@ -831,11 +758,24 @@ MPP_RET mpp_enc_roi_add_region(MppEncRoiCtx ctx, RoiRegionCfg *region)
  {
      MppEncRoiImpl *impl = (MppEncRoiImpl *)ctx;
- 
+
 +    if (!impl || !region)
 +        return MPP_ERR_NULL_PTR;
 +
@@ -527,7 +538,7 @@ index bf1bb68..05e73a4 100644
 -        return MPP_NOK;
 +        return MPP_ERR_VALUE;
      }
- 
+
 +    if (!region->w || !region->h ||
 +        region->x >= impl->w || region->y >= impl->h ||
 +        region->w > impl->w - region->x ||
@@ -540,8 +551,8 @@ index bf1bb68..05e73a4 100644
 +
      memcpy(impl->regions + impl->count, region, sizeof(*impl->regions));
      impl->count++;
- 
-@@ -845,71 +770,36 @@ MPP_RET mpp_enc_roi_add_region(MppEncRoiCtx ctx, RoiRegionCfg *region)
+
+@@ -845,71 +785,58 @@ MPP_RET mpp_enc_roi_add_region(MppEncRoiCtx ctx, RoiRegionCfg *region)
  MPP_RET mpp_enc_roi_setup_meta(MppEncRoiCtx ctx, MppMeta meta)
  {
      MppEncRoiImpl *impl = (MppEncRoiImpl *)ctx;
@@ -559,10 +570,31 @@ index bf1bb68..05e73a4 100644
 -        } break;
 -        default : {
 -        } break;
--        }
 +    if (!impl || !meta)
 +        return MPP_ERR_NULL_PTR;
- 
++
++    if (impl->legacy_roi_cfg.regions) {
++        RK_S32 i;
++
++        for (i = 0; i < impl->count; i++) {
++            const RoiRegionCfg *src = &impl->regions[i];
++            MppEncROIRegion *dst = &impl->legacy_roi_cfg.regions[i];
++
++            *dst = (MppEncROIRegion) {
++                .x = src->x, .y = src->y, .w = src->w, .h = src->h,
++                .intra = src->force_intra,
++                .quality = src->qp_val,
++                .qp_area_idx = 0,
++                .area_map_en = 1,
++                .abs_qp_en = src->qp_mode,
++            };
+         }
++        impl->legacy_roi_cfg.number = impl->count;
++        ret = mpp_meta_set_ptr(meta, KEY_ROI_DATA, &impl->legacy_roi_cfg);
++        impl->count = 0;
++        return ret;
++    }
+
 -        mpp_meta_set_ptr(meta, KEY_ROI_DATA2, (void*)&impl->roi_cfg);
 -        mpp_buffer_sync_ro_end(impl->roi_cfg.base_cfg_buf);
 -    } break;
@@ -616,7 +648,7 @@ index bf1bb68..05e73a4 100644
 -    default : {
 -    } break;
      }
- 
+
 +    if (!ret)
 +        ret = mpp_buffer_sync_ro_end(impl->roi_cfg.base_cfg_buf);
 +    if (!ret)
@@ -626,31 +658,220 @@ index bf1bb68..05e73a4 100644
 +                               (void*)&impl->roi_cfg);
 +
      impl->count = 0;
- 
+
 -    return MPP_OK;
 +    return ret;
  }
 diff --git a/utils/mpp_enc_roi_utils.h b/utils/mpp_enc_roi_utils.h
-index 4169e7e..9d542db 100644
+index 4169e7e..989d28b 100644
 --- a/utils/mpp_enc_roi_utils.h
 +++ b/utils/mpp_enc_roi_utils.h
 @@ -39,10 +39,19 @@ typedef struct RRegion_t {
  extern "C" {
  #endif
- 
+
 +/*
 + * A context is mutable and is not thread-safe. mpp_enc_roi_setup_meta()
 + * stores pointers owned by ctx in meta; keep that ctx alive and do not reuse
 + * it for another in-flight frame until the encoder has finished consuming the
 + * frame. Use one context per asynchronous input slot.
 + *
-+ * This public utility supports the RK3588 ROI2 backend only.
++ * Supports RK3588 ROI2 and RK3576/RV1126B register ROI, up to eight regions.
 + */
  MPP_RET mpp_enc_roi_init(MppEncRoiCtx *ctx, RK_U32 w, RK_U32 h, MppCodingType type, RK_S32 count);
  MPP_RET mpp_enc_roi_deinit(MppEncRoiCtx ctx);
- 
+
  MPP_RET mpp_enc_roi_add_region(MppEncRoiCtx ctx, RoiRegionCfg *region);
 +/* On success, ownership stays with ctx and is not transferred to meta. */
  MPP_RET mpp_enc_roi_setup_meta(MppEncRoiCtx ctx, MppMeta meta);
- 
+
  #ifdef __cplusplus
+diff --git a/mpp/hal/rkenc/h264e/hal_h264e_vepu510.c b/mpp/hal/rkenc/h264e/hal_h264e_vepu510.c
+--- a/mpp/hal/rkenc/h264e/hal_h264e_vepu510.c
++++ b/mpp/hal/rkenc/h264e/hal_h264e_vepu510.c
+@@ -9,6 +9,7 @@
+
+ #include "mpp_env.h"
+ #include "mpp_mem.h"
++#include "mpp_soc.h"
+ #include "mpp_common.h"
+ #include "mpp_frame_impl.h"
+ #include "mpp_packet_impl.h"
+@@ -1197,12 +1198,39 @@
+     regs->reg_rc_roi.roi_qthd2.qpmin_area7    = qp_min;
+
+     regs->reg_rc_roi.roi_qthd3.qpmax_area7    = qp_max;
++    if (rc->rc_mode == MPP_ENC_RC_MODE_FIXQP &&
++        mpp_get_soc_type() == ROCKCHIP_SOC_RK3576 && ctx->roi_data &&
++        ((MppEncROICfg *)ctx->roi_data)->number) {
++        /* CQP keeps background pic_qp fixed with RC/AQ disabled. */
++        regs->reg_rc_roi.roi_qthd0.qpmin_area0 = 0;
++        regs->reg_rc_roi.roi_qthd0.qpmax_area0 = 51;
++        regs->reg_rc_roi.roi_qthd0.qpmin_area1 = 0;
++        regs->reg_rc_roi.roi_qthd0.qpmax_area1 = 51;
++        regs->reg_rc_roi.roi_qthd0.qpmin_area2 = 0;
++        regs->reg_rc_roi.roi_qthd1.qpmax_area2 = 51;
++        regs->reg_rc_roi.roi_qthd1.qpmin_area3 = 0;
++        regs->reg_rc_roi.roi_qthd1.qpmax_area3 = 51;
++        regs->reg_rc_roi.roi_qthd1.qpmin_area4 = 0;
++        regs->reg_rc_roi.roi_qthd1.qpmax_area4 = 51;
++        regs->reg_rc_roi.roi_qthd2.qpmin_area5 = 0;
++        regs->reg_rc_roi.roi_qthd2.qpmax_area5 = 51;
++        regs->reg_rc_roi.roi_qthd2.qpmin_area6 = 0;
++        regs->reg_rc_roi.roi_qthd2.qpmax_area6 = 51;
++        regs->reg_rc_roi.roi_qthd2.qpmin_area7 = 0;
++        regs->reg_rc_roi.roi_qthd3.qpmax_area7 = 51;
++    }
++
+     regs->reg_rc_roi.roi_qthd3.qpmap_mode     = qpmap_mode;
+
+     if (rc->rc_mode == MPP_ENC_RC_MODE_FIXQP) {
+         reg_frm->common.enc_pic.pic_qp    = rc_info->quality_target;
+         reg_frm->common.rc_qp.rc_max_qp   = rc_info->quality_target;
+         reg_frm->common.rc_qp.rc_min_qp   = rc_info->quality_target;
++        if (mpp_get_soc_type() == ROCKCHIP_SOC_RK3576 && ctx->roi_data &&
++            ((MppEncROICfg *)ctx->roi_data)->number) {
++            reg_frm->common.rc_qp.rc_min_qp = 0;
++            reg_frm->common.rc_qp.rc_max_qp = 51;
++        }
+
+         return;
+     }
+diff --git a/mpp/hal/rkenc/h264e/hal_h264e_vepu511.c b/mpp/hal/rkenc/h264e/hal_h264e_vepu511.c
+--- a/mpp/hal/rkenc/h264e/hal_h264e_vepu511.c
++++ b/mpp/hal/rkenc/h264e/hal_h264e_vepu511.c
+@@ -9,6 +9,7 @@
+
+ #include "mpp_env.h"
+ #include "mpp_mem.h"
++#include "mpp_soc.h"
+ #include "mpp_common.h"
+ #include "mpp_frame_impl.h"
+ #include "mpp_packet_impl.h"
+@@ -1360,6 +1361,34 @@
+     regs->reg_rc_roi.roi_qthd2.qpmin_area7 = qp_min;
+
+     regs->reg_rc_roi.roi_qthd3.qpmax_area7 = qp_max;
++
++    if (cfg->rc.rc_mode == MPP_ENC_RC_MODE_FIXQP &&
++        mpp_get_soc_type() == ROCKCHIP_SOC_RV1126B && ctx->roi_data &&
++        ((MppEncROICfg *)ctx->roi_data)->number) {
++        /* CQP keeps background pic_qp fixed with RC/AQ disabled. */
++        regs->reg_frm.enc_pic.pic_qp = qp_target;
++        regs->reg_frm.rc_cfg.rc_en = 0;
++        regs->reg_frm.rc_cfg.aq_en = 0;
++        regs->reg_frm.rc_qp.rc_qp_range = 0;
++        regs->reg_frm.rc_qp.rc_min_qp = 0;
++        regs->reg_frm.rc_qp.rc_max_qp = 51;
++        regs->reg_rc_roi.roi_qthd0.qpmin_area0 = 0;
++        regs->reg_rc_roi.roi_qthd0.qpmax_area0 = 51;
++        regs->reg_rc_roi.roi_qthd0.qpmin_area1 = 0;
++        regs->reg_rc_roi.roi_qthd0.qpmax_area1 = 51;
++        regs->reg_rc_roi.roi_qthd0.qpmin_area2 = 0;
++        regs->reg_rc_roi.roi_qthd1.qpmax_area2 = 51;
++        regs->reg_rc_roi.roi_qthd1.qpmin_area3 = 0;
++        regs->reg_rc_roi.roi_qthd1.qpmax_area3 = 51;
++        regs->reg_rc_roi.roi_qthd1.qpmin_area4 = 0;
++        regs->reg_rc_roi.roi_qthd1.qpmax_area4 = 51;
++        regs->reg_rc_roi.roi_qthd2.qpmin_area5 = 0;
++        regs->reg_rc_roi.roi_qthd2.qpmax_area5 = 51;
++        regs->reg_rc_roi.roi_qthd2.qpmin_area6 = 0;
++        regs->reg_rc_roi.roi_qthd2.qpmax_area6 = 51;
++        regs->reg_rc_roi.roi_qthd2.qpmin_area7 = 0;
++        regs->reg_rc_roi.roi_qthd3.qpmax_area7 = 51;
++    }
+
+     hal_h264e_dbg_func("leave\n");
+ }
+diff --git a/mpp/hal/rkenc/h265e/hal_h265e_vepu510.c b/mpp/hal/rkenc/h265e/hal_h265e_vepu510.c
+--- a/mpp/hal/rkenc/h265e/hal_h265e_vepu510.c
++++ b/mpp/hal/rkenc/h265e/hal_h265e_vepu510.c
+@@ -11,6 +11,7 @@
+
+ #include "mpp_env.h"
+ #include "mpp_mem.h"
++#include "mpp_soc.h"
+ #include "mpp_common.h"
+ #include "mpp_frame_impl.h"
+ #include "mpp_packet_impl.h"
+@@ -1316,6 +1317,12 @@
+         reg_frm->synt_sli1.sli_qp         = rc_cfg->quality_target;
+         reg_frm->common.rc_qp.rc_max_qp   = rc_cfg->quality_target;
+         reg_frm->common.rc_qp.rc_min_qp   = rc_cfg->quality_target;
++        if (mpp_get_soc_type() == ROCKCHIP_SOC_RK3576 && ctx->roi_data &&
++            ((MppEncROICfg *)ctx->roi_data)->number) {
++            /* CQP keeps background pic_qp fixed with RC/AQ disabled. */
++            reg_frm->common.rc_qp.rc_min_qp = 0;
++            reg_frm->common.rc_qp.rc_max_qp = 51;
++        }
+     } else {
+         if (ctu_target_bits_mul_16 >= 0x100000) {
+             ctu_target_bits_mul_16 = 0x50000;
+@@ -1398,6 +1405,27 @@
+     reg_rc->roi_qthd2.qpmin_area7 = h265->qpmin_map[7] > 0 ? h265->qpmin_map[7] : rc_cfg->quality_min;
+     reg_rc->roi_qthd3.qpmax_area7 = h265->qpmax_map[7] > 0 ? h265->qpmax_map[7] : rc_cfg->quality_max;
+     reg_rc->roi_qthd3.qpmap_mode  = h265->qpmap_mode;
++
++    if (rc->rc_mode == MPP_ENC_RC_MODE_FIXQP &&
++        mpp_get_soc_type() == ROCKCHIP_SOC_RK3576 && ctx->roi_data &&
++        ((MppEncROICfg *)ctx->roi_data)->number) {
++        reg_rc->roi_qthd0.qpmin_area0 = 0;
++        reg_rc->roi_qthd0.qpmax_area0 = 51;
++        reg_rc->roi_qthd0.qpmin_area1 = 0;
++        reg_rc->roi_qthd0.qpmax_area1 = 51;
++        reg_rc->roi_qthd0.qpmin_area2 = 0;
++        reg_rc->roi_qthd1.qpmax_area2 = 51;
++        reg_rc->roi_qthd1.qpmin_area3 = 0;
++        reg_rc->roi_qthd1.qpmax_area3 = 51;
++        reg_rc->roi_qthd1.qpmin_area4 = 0;
++        reg_rc->roi_qthd1.qpmax_area4 = 51;
++        reg_rc->roi_qthd2.qpmin_area5 = 0;
++        reg_rc->roi_qthd2.qpmax_area5 = 51;
++        reg_rc->roi_qthd2.qpmin_area6 = 0;
++        reg_rc->roi_qthd2.qpmax_area6 = 51;
++        reg_rc->roi_qthd2.qpmin_area7 = 0;
++        reg_rc->roi_qthd3.qpmax_area7 = 51;
++    }
+
+     return MPP_OK;
+ }
+diff --git a/mpp/hal/rkenc/h265e/hal_h265e_vepu511.c b/mpp/hal/rkenc/h265e/hal_h265e_vepu511.c
+--- a/mpp/hal/rkenc/h265e/hal_h265e_vepu511.c
++++ b/mpp/hal/rkenc/h265e/hal_h265e_vepu511.c
+@@ -11,6 +11,7 @@
+
+ #include "mpp_env.h"
+ #include "mpp_mem.h"
++#include "mpp_soc.h"
+ #include "mpp_common.h"
+ #include "mpp_frame_impl.h"
+ #include "mpp_packet_impl.h"
+@@ -1297,6 +1298,28 @@
+         reg_frm->reg213_rc_qp.rc_max_qp   = rc_cfg->quality_target;
+         reg_frm->reg213_rc_qp.rc_min_qp   = rc_cfg->quality_target;
+         reg_frm->reg212_rc_cfg.rc_ctu_num = 1;
++        if (mpp_get_soc_type() == ROCKCHIP_SOC_RV1126B && ctx->roi_data &&
++            ((MppEncROICfg *)ctx->roi_data)->number) {
++            /* CQP keeps background pic_qp fixed with RC/AQ disabled. */
++            reg_frm->reg213_rc_qp.rc_min_qp = 0;
++            reg_frm->reg213_rc_qp.rc_max_qp = 51;
++            reg_rc->roi_qthd0.qpmin_area0 = 0;
++            reg_rc->roi_qthd0.qpmax_area0 = 51;
++            reg_rc->roi_qthd0.qpmin_area1 = 0;
++            reg_rc->roi_qthd0.qpmax_area1 = 51;
++            reg_rc->roi_qthd0.qpmin_area2 = 0;
++            reg_rc->roi_qthd1.qpmax_area2 = 51;
++            reg_rc->roi_qthd1.qpmin_area3 = 0;
++            reg_rc->roi_qthd1.qpmax_area3 = 51;
++            reg_rc->roi_qthd1.qpmin_area4 = 0;
++            reg_rc->roi_qthd1.qpmax_area4 = 51;
++            reg_rc->roi_qthd2.qpmin_area5 = 0;
++            reg_rc->roi_qthd2.qpmax_area5 = 51;
++            reg_rc->roi_qthd2.qpmin_area6 = 0;
++            reg_rc->roi_qthd2.qpmax_area6 = 51;
++            reg_rc->roi_qthd2.qpmin_area7 = 0;
++            reg_rc->roi_qthd3.qpmax_area7 = 51;
++        }
+     } else {
+         if (ctu_target_bits_mul_16 >= 0x100000)
+             ctu_target_bits_mul_16 = 0x50000;

@@ -16,7 +16,7 @@ Usage:
   $0 clean <rk3588|rk3576|rv1126b|all>
   $0 image
 
-RK3588 builds use the vendored public V3 headers in compat/frame-decision by
+All three platform builds use the vendored public V3 headers in compat/frame-decision by
 default. Set FRAME_DECISION_SDK_PREFIX to override them with an ABI-compatible
 prefix. The selected prefix is mounted read-only into the builder.
 EOF
@@ -162,13 +162,11 @@ build_target() {
     --env "SOURCE_REVISION=$source_revision"
   )
 
-  if [ "$target" = rk3588 ]; then
-    frame_decision_sdk_prefix=$(validate_frame_decision_sdk_prefix)
-    docker_args+=(
-      --volume "$frame_decision_sdk_prefix:/frame-decision-sdk:ro"
-      --env "FRAME_DECISION_SDK_PREFIX=/frame-decision-sdk"
-    )
-  fi
+  frame_decision_sdk_prefix=$(validate_frame_decision_sdk_prefix)
+  docker_args+=(
+    --volume "$frame_decision_sdk_prefix:/frame-decision-sdk:ro"
+    --env "FRAME_DECISION_SDK_PREFIX=/frame-decision-sdk"
+  )
 
   for variable_name in \
     GIT_RETRY_ATTEMPTS \
@@ -222,11 +220,7 @@ if [ "$command_name" = clean ]; then
   exit 0
 fi
 
-for target in "${selected_targets[@]}"; do
-  if [ "$target" = rk3588 ]; then
-    validate_frame_decision_sdk_prefix >/dev/null
-  fi
-done
+validate_frame_decision_sdk_prefix >/dev/null
 
 assert_docker_arm64
 build_image

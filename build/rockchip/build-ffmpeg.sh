@@ -25,33 +25,31 @@ build_ffmpeg() {
   local stamp_tmp
 
   extra_cflags="-I$DEPS_PREFIX/include $TARGET_CFLAGS"
-  if [ "$target" = rk3588 ]; then
-    : "${FRAME_DECISION_SDK_PREFIX:?RK3588 requires FRAME_DECISION_SDK_PREFIX}"
-    frame_decision_sdk_prefix=$FRAME_DECISION_SDK_PREFIX
+  : "${FRAME_DECISION_SDK_PREFIX:?ROI builds require FRAME_DECISION_SDK_PREFIX}"
+  frame_decision_sdk_prefix=$FRAME_DECISION_SDK_PREFIX
+  for header in \
+    frame_decision_async.h \
+    frame_decision_protocol_v3.h \
+    frame_decision_sdk.h; do
+    if [ ! -f "$frame_decision_sdk_prefix/include/$header" ]; then
+      printf 'Missing frame-decision SDK header: %s\n' \
+        "$frame_decision_sdk_prefix/include/$header" >&2
+      return 1
+    fi
+  done
+  frame_decision_headers_sha256=$(
     for header in \
       frame_decision_async.h \
       frame_decision_protocol_v3.h \
       frame_decision_sdk.h; do
-      if [ ! -f "$frame_decision_sdk_prefix/include/$header" ]; then
-        printf 'Missing frame-decision SDK header: %s\n' \
-          "$frame_decision_sdk_prefix/include/$header" >&2
-        return 1
-      fi
-    done
-    frame_decision_headers_sha256=$(
-      for header in \
-        frame_decision_async.h \
-        frame_decision_protocol_v3.h \
-        frame_decision_sdk.h; do
-        printf '%s\0' "$header"
-        sha256sum "$frame_decision_sdk_prefix/include/$header" |
-          awk '{ print $1 }'
-      done |
-        sha256sum |
+      printf '%s\0' "$header"
+      sha256sum "$frame_decision_sdk_prefix/include/$header" |
         awk '{ print $1 }'
-    )
-    extra_cflags="$extra_cflags -I$frame_decision_sdk_prefix/include"
-  fi
+    done |
+      sha256sum |
+      awk '{ print $1 }'
+  )
+  extra_cflags="$extra_cflags -I$frame_decision_sdk_prefix/include"
 
   configure_args=(
     --prefix="$INSTALL_PREFIX"
@@ -141,12 +139,10 @@ build_ffmpeg() {
     "--extra-cflags=$extra_cflags"
     "--extra-ldflags=-L$DEPS_PREFIX/lib $TARGET_LDFLAGS"
   )
-  if [ "$target" = rk3588 ]; then
-    configure_args+=(
-      --enable-libframe-decision
-      --enable-filter=frame_decision_roi
-    )
-  fi
+  configure_args+=(
+    --enable-libframe-decision
+    --enable-filter=frame_decision_roi
+  )
 
   configure_args_sha=$(
     printf '%s\0' "${configure_args[@]}" |
@@ -290,21 +286,17 @@ build_ffmpeg() {
       libavcodec/tests/rkmppenc_roi
       fate-rkmppenc-roi
     )
-    if [ "$target" = rk3588 ]; then
-      make_targets+=(
-        libavfilter/tests/frame_decision_roi
-        libavfilter/tests/frame_decision_roi_control
-      )
-    fi
+    make_targets+=(
+      libavfilter/tests/frame_decision_roi
+      libavfilter/tests/frame_decision_roi_control
+    )
     LD_LIBRARY_PATH="$DEPS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
       make -j"$(nproc)" \
         "${make_targets[@]}"
-    if [ "$target" = rk3588 ]; then
-      LD_LIBRARY_PATH="$DEPS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-        ./libavfilter/tests/frame_decision_roi
-      LD_LIBRARY_PATH="$DEPS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
-        ./libavfilter/tests/frame_decision_roi_control
-    fi
+    LD_LIBRARY_PATH="$DEPS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+      ./libavfilter/tests/frame_decision_roi
+    LD_LIBRARY_PATH="$DEPS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+      ./libavfilter/tests/frame_decision_roi_control
     make install
   )
 
@@ -376,12 +368,10 @@ build_ffmpeg() {
     CONFIG_FORMAT_FILTER
     CONFIG_NULL_FILTER
   )
-  if [ "$target" = rk3588 ]; then
-    required_configs+=(
+  required_configs+=(
     CONFIG_FRAME_DECISION_ROI_FILTER
     CONFIG_LIBFRAME_DECISION
-    )
-  fi
+  )
 
   for config_name in "${required_configs[@]}"; do
     if ! grep -qx "${config_name}=yes" \
