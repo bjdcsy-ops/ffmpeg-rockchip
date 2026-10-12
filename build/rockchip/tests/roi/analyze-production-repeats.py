@@ -349,7 +349,7 @@ def validate_check(raw: Any, report_label: str, index: int) -> dict[str, Any]:
             f"{report_label} check {name!r} has invalid fields: {'; '.join(details)}"
         )
 
-    unit = actual_field.removeprefix("actual_")
+    unit = actual_field[len("actual_"):]
     direction, threshold_unit = threshold_field.split("_", 1)
     if not unit or threshold_unit != unit:
         raise RepeatAnalysisError(
