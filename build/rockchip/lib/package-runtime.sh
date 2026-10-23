@@ -85,6 +85,12 @@ rockchip_verify_binary_libraries() {
     return 1
   fi
 
+  if ! rockchip_verify_bundled_library \
+    "$ldd_output" "$expected_lib_dir" libz.so.1 "$layout" "$program"; then
+    cat "$ldd_output" >&2
+    return 1
+  fi
+
   if [ -n "${ROCKCHIP_BUILD_TRACE:-}" ]; then
     printf 'Raw ldd output: layout=%s program=%s\n' "$layout" "$program"
     cat "$ldd_output"
@@ -449,10 +455,10 @@ rockchip_write_runtime_readme() {
 ffmpeg-rockchip $target build
 
 Built on Ubuntu 20.04 with LTO and target-specific CPU flags.
-Required MPP and RGA runtime libraries are packaged under lib/.
+Required MPP, RGA, and zlib runtime libraries are packaged under lib/.
 FFmpeg is intentionally component-pruned for RTSP/RTP, H.264/HEVC
-rkmpp codecs, and RGA filters instead of full general-purpose codec
-or SDK coverage.
+rkmpp codecs, PNG file inputs, and RGA filters instead of full
+general-purpose codec or SDK coverage.
 Run ./ffmpeg from this directory so the embedded runtime path resolves
 the bundled lib/ directory.
 
@@ -464,6 +470,8 @@ Smoke checks:
   ./ffmpeg -encoders | grep rkmpp
   ./ffmpeg -filters | grep rkrga
   ./ffmpeg -filters | grep addroi
+  ./ffmpeg -decoders | grep png
+  ./ffmpeg -demuxers | grep image2
 EOF
 
   cat >>"$PACKAGE_DIR/README.txt" <<EOF
@@ -516,6 +524,7 @@ package_rockchip_runtime() (
   local -a required_filters
   local -a rga_libraries
   local version_date
+  local zlib_library
 
   rga_libraries=("$DEPS_PREFIX"/lib/librga.so*)
   mpp_libraries=("$DEPS_PREFIX"/lib/librockchip_mpp.so*)
@@ -526,9 +535,16 @@ package_rockchip_runtime() (
     return 1
   fi
 
+  zlib_library=$(gcc -print-file-name=libz.so.1)
+  if [ ! -f "$zlib_library" ]; then
+    printf 'zlib runtime library is missing: %s\n' "$zlib_library" >&2
+    return 1
+  fi
+
   mkdir -p "$INSTALL_PREFIX/bin/lib"
   cp -a "${rga_libraries[@]}" "$INSTALL_PREFIX/bin/lib/"
   cp -a "${mpp_libraries[@]}" "$INSTALL_PREFIX/bin/lib/"
+  cp -L "$zlib_library" "$INSTALL_PREFIX/bin/lib/libz.so.1"
 
   patchelf --set-rpath '$ORIGIN/lib' \
     "$INSTALL_PREFIX/bin/ffmpeg"
@@ -560,7 +576,8 @@ package_rockchip_runtime() (
     glibc_binaries+=("$library")
   done < <(
     find "$PACKAGE_DIR/lib" -type f \
-      \( -name 'librga.so*' -o -name 'librockchip_mpp.so*' \) \
+      \( -name 'librga.so*' -o -name 'librockchip_mpp.so*' \
+         -o -name 'libz.so*' \) \
       -print0
   )
   rockchip_verify_glibc_abi \
@@ -619,7 +636,8 @@ package_rockchip_runtime() (
     pcm_s16be \
     pcm_s16le \
     pcm_s24be \
-    pcm_s24le
+    pcm_s24le \
+    png
   rockchip_verify_component_list \
     "$PACKAGE_DIR/ffmpeg" \
     encoders \
@@ -629,7 +647,7 @@ package_rockchip_runtime() (
     hevc_rkmpp \
     pcm_mulaw
   rockchip_verify_component_list \
-    "$PACKAGE_DIR/ffmpeg" demuxers -demuxers rtsp rtp sdp mpegts
+    "$PACKAGE_DIR/ffmpeg" demuxers -demuxers rtsp rtp sdp mpegts image2
   rockchip_verify_component_list \
     "$PACKAGE_DIR/ffmpeg" muxers -muxers rtsp rtp mpegts
   rockchip_verify_muxer_option \
@@ -685,7 +703,7 @@ package_rockchip_runtime() (
       "$PACKAGE_DIR/ffmpeg" frame_decision_roi "$option"
   done
   printf \
-    'FFmpeg component check passed: decoders=19 encoders=4 demuxers=4 muxers=3 filters=%d rtsp_options=1 encoder_options=1 filter_options=%d\n' \
+    'FFmpeg component check passed: decoders=20 encoders=4 demuxers=5 muxers=3 filters=%d rtsp_options=1 encoder_options=1 filter_options=%d\n' \
     "$filter_count" "$filter_option_count"
 
   manifest_tmp=$(mktemp "$BUILD_ROOT/.artifact-manifest.XXXXXX")

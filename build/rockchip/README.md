@@ -37,6 +37,11 @@
 时钟频率、声道数及分帧方式后再加入兼容清单。交付验证只能证明组件已注册；
 新增输入格式仍需在目标板上完成 RTSP 到 AAC 的端到端测试。
 
+固定水印使用 `image2` demuxer、`png` decoder 和 `zlib` 读取单张透明 PNG，
+再由已有的 `hwupload`、`overlay_rkrga` 完成硬件合成；运行时随包交付
+`libz.so.1`。输入约束、RTSP 命令及目标板验收步骤见
+[实时 RTSP 静态 PNG 水印指南](STATIC-WATERMARK.md)。
+
 ## 快速开始
 
 Docker 客户端可以运行在 macOS 或 Linux，但 Docker 服务端必须是 Linux

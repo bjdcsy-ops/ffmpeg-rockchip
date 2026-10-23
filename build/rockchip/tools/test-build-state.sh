@@ -341,11 +341,18 @@ for argument in "$@"; do
       printf 'CONFIG_%s_%s=yes\n' "$config_name" "$config_type" \
         >>ffbuild/config.mak
       ;;
+    --enable-zlib)
+      printf 'CONFIG_ZLIB=yes\n' >>ffbuild/config.mak
+      ;;
     --enable-libframe-decision)
       printf 'CONFIG_LIBFRAME_DECISION=yes\n' >>ffbuild/config.mak
       ;;
   esac
 done
+
+if [ -n "${ROCKCHIP_TEST_MISSING_CONFIG:-}" ]; then
+  sed -i "/^${ROCKCHIP_TEST_MISSING_CONFIG}=yes$/d" ffbuild/config.mak
+fi
 
 printf 'configure\n' >>"$ROCKCHIP_TEST_CONFIGURE_LOG"
 EOF
@@ -447,6 +454,67 @@ EOF
     8 \
     "$(wc -l <"$make_log" | tr -d '[:space:]')" \
     "unexpected number of mocked make calls"
+
+  if [ "$test_target" = rk3576 ]; then
+    local missing_config
+
+    for missing_config in \
+      CONFIG_PNG_DECODER \
+      CONFIG_IMAGE2_DEMUXER \
+      CONFIG_ZLIB; do
+      if ROCKCHIP_TEST_MISSING_CONFIG=$missing_config \
+        build_ffmpeg >"$case_root/missing-config.log" 2>&1; then
+        fail "configuration gate accepted missing $missing_config"
+      fi
+      grep -Fq "Required FFmpeg configuration is missing: $missing_config" \
+        "$case_root/missing-config.log"
+    done
+  fi
+)
+
+test_bundled_zlib() (
+  local case_root="$TEST_ROOT/bundled-zlib"
+  local fixture_ldd_output="$case_root/ldd.txt"
+  local library
+  local library_dir="$case_root/package/lib"
+
+  mkdir -p "$library_dir" "$case_root/system"
+  for library in librga.so.2 librockchip_mpp.so.1 libz.so.1; do
+    : >"$library_dir/$library"
+  done
+  : >"$case_root/system/libz.so.1"
+  env() {
+    assert_equal "-u LD_LIBRARY_PATH ldd" "$1 $2 $3" \
+      "runtime verification did not clear LD_LIBRARY_PATH before ldd"
+    cat "$fixture_ldd_output"
+  }
+  BUILD_ROOT=$case_root
+
+  source "$ROCKCHIP_BUILD_DIR/lib/package-runtime.sh"
+
+  for library in librga.so.2 librockchip_mpp.so.1; do
+    printf '%s => %s/%s (0x0)\n' "$library" "$library_dir" "$library"
+  done >"$case_root/ldd-base.txt"
+  cp "$case_root/ldd-base.txt" "$fixture_ldd_output"
+  printf 'libz.so.1 => %s/libz.so.1 (0x0)\n' "$library_dir" \
+    >>"$fixture_ldd_output"
+  rockchip_verify_binary_libraries \
+    "$case_root/package/ffmpeg" "$library_dir" artifact ffmpeg
+
+  cp "$case_root/ldd-base.txt" "$fixture_ldd_output"
+  if rockchip_verify_binary_libraries \
+    "$case_root/package/ffmpeg" "$library_dir" artifact ffmpeg \
+    >"$case_root/missing.log" 2>&1; then
+    fail "runtime verification accepted missing libz.so.1"
+  fi
+
+  printf 'libz.so.1 => %s/system/libz.so.1 (0x0)\n' "$case_root" \
+    >>"$fixture_ldd_output"
+  if rockchip_verify_binary_libraries \
+    "$case_root/package/ffmpeg" "$library_dir" artifact ffmpeg \
+    >"$case_root/system.log" 2>&1; then
+    fail "runtime verification accepted libz.so.1 from the system"
+  fi
 )
 
 test_internal_artifact_manifest() (
@@ -553,6 +621,7 @@ test_rga_environment_isolation
 test_ffmpeg_stamp_transitions rk3588
 test_ffmpeg_stamp_transitions rk3576
 test_ffmpeg_stamp_transitions rv1126b
+test_bundled_zlib
 test_internal_artifact_manifest
 test_glibc_abi_ceiling
 
