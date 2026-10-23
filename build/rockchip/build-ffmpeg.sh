@@ -286,6 +286,8 @@ build_ffmpeg() {
     rm -f -- .version
     make_targets=(
       all
+      fate-parser
+      fate-parser-timestamp
       libavcodec/tests/rkmppenc_roi
       fate-rkmppenc-roi
     )

@@ -401,6 +401,8 @@ EOF
   source "$SCRIPT_DIR/build-ffmpeg.sh"
 
   build_ffmpeg >"$first_log"
+  grep -Eq 'make .* fate-parser( |$)' "$make_log"
+  grep -Eq 'make .* fate-parser-timestamp( |$)' "$make_log"
   grep -Fq \
     "Preparing FFmpeg build directory: no configuration stamp found" \
     "$first_log"
