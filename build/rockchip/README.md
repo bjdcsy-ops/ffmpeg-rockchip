@@ -42,6 +42,36 @@
 `libz.so.1`。输入约束、RTSP 命令及目标板验收步骤见
 [实时 RTSP 静态 PNG 水印指南](STATIC-WATERMARK.md)。
 
+## Mac 一键水印演示
+
+`watermark-demo.py` 在 Mac 生成文字 PNG，通过 SSH 上传完整 runtime，
+在目标板启动独立的 loopback 媒体服务、测试源和水印流水线。支持普通文字、
+水平矩阵和斜向矩阵；默认复用板端测试文件，不接受摄像头 URL。
+
+在仓库根目录准备 Python 3.8 或更新版本，并一次安装本机排版依赖：
+
+```bash
+python3 -m venv /private/tmp/ffmpeg-watermark-venv
+source /private/tmp/ffmpeg-watermark-venv/bin/activate
+python -m pip install -r build/rockchip/watermark-demo-requirements.txt
+```
+
+默认使用 `RK3576` SSH 别名、本机
+`artifact/ffmpeg-rockchip-rk3576-ubuntu20-arm64/` 完整交付目录，以及板端
+`/run/media/mmcblk0p8/ffmpeg-watermark-demo/source.mp4`。准备好板端
+Python、ZLMediaKit 和 `1920×1080`、25 fps 的 H.264 测试文件后运行：
+
+```bash
+python build/rockchip/watermark-demo.py --mode single --text 'RTSP WATERMARK' --open
+```
+
+`--open` 需要 Mac 安装 VLC；省略时只打印经 SSH 转发的本机 RTSP URL。
+脚本前台运行，Ctrl+C 或到达 `--duration` 时限后停止本次创建的子进程与
+转发，保留两端证据目录。默认时限 3600 秒，范围 `10..3600` 秒。
+脚本不自动安装依赖、构建 FFmpeg 或替换生产程序。准备步骤、三模式并行
+示例、全部参数、离线测试与故障定位见
+[一键演示指南](STATIC-WATERMARK.md#mac-一键演示)。
+
 ## 快速开始
 
 Docker 客户端可以运行在 macOS 或 Linux，但 Docker 服务端必须是 Linux
@@ -95,6 +125,18 @@ ARM64。宿主机只负责启动容器，不会直接编译 FFmpeg。以下命�
 
 FFmpeg 的 configure、make、ROI 无硬件测试和 install 命令集中在
 `build-ffmpeg.sh`，修改 FFmpeg 构建能力时通常从这里开始。
+
+### 水印演示文件
+
+| 文件 | 作用 |
+| --- | --- |
+| `watermark-demo.py` | Mac 主机入口，上传 runtime、管理 SSH 转发与预览生命周期 |
+| `watermark_image.py` | 使用本机 Pillow 生成普通文字、水平矩阵和斜向矩阵 RGBA PNG |
+| `watermark_remote.py` | 仅使用标准库的板端 worker，管理独立媒体服务、FFmpeg 和证据 |
+| `watermark-demo-requirements.txt` | 本机图片依赖 `Pillow>=9.1,<13`，不安装到板端 |
+| `tests/test_watermark_control.py`、`tests/test_watermark_remote.py` | 标准库离线测试，接入 `tools/check.sh` |
+| `tests/test_watermark_image.py` | 需要 Pillow 的图像布局测试，单独执行 |
+| `STATIC-WATERMARK.md` | 一键演示、手工摄像头 RTSP 合成与板端验收指南 |
 
 ### `lib/`
 
@@ -318,6 +360,17 @@ docker run --rm \
   ffmpeg-rockchip-build:ubuntu22-arm64 \
   /workspace/build/rockchip/tools/check.sh
 ```
+
+`tools/check.sh` 包含水印控制器和板端 worker 的标准库离线测试；图片布局
+测试需要在安装 Pillow 的虚拟环境中单独运行：
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python -m unittest discover \
+  -s build/rockchip/tests -p 'test_watermark_image.py'
+```
+
+离线测试不覆盖板端 MPP/RGA 驱动、RTSP 发布或播放效果，目标板步骤见
+[水印验收指南](STATIC-WATERMARK.md#目标板验收)。
 
 至少构建一个受影响的目标：
 
