@@ -775,6 +775,7 @@ TESTPROGS = seek                                                        \
             seek_utils
 #           async                                                       \
 
+TESTPROGS-$(CONFIG_AAC_PARSER)           += parser_timestamp
 FIFO-MUXER-TESTPROGS-$(CONFIG_NETWORK)   += fifo_muxer
 TESTPROGS-$(CONFIG_FIFO_MUXER)           += $(FIFO-MUXER-TESTPROGS-yes)
 TESTPROGS-$(CONFIG_FFRTMPCRYPT_PROTOCOL) += rtmpdh

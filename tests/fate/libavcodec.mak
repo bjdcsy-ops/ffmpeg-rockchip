@@ -91,6 +91,11 @@ fate-mpeg12framerate: libavcodec/tests/mpeg12framerate$(EXESUF)
 fate-mpeg12framerate: CMD = run libavcodec/tests/mpeg12framerate$(EXESUF)
 fate-mpeg12framerate: REF = /dev/null
 
+FATE_LIBAVCODEC-$(call ALLYES, AAC_PARSER H264_PARSER HEVC_PARSER) += fate-parser
+fate-parser: libavcodec/tests/parser$(EXESUF)
+fate-parser: CMD = run libavcodec/tests/parser$(EXESUF)
+fate-parser: REF = /dev/null
+
 FATE_LIBAVCODEC-$(CONFIG_RANGECODER) += fate-rangecoder
 fate-rangecoder: libavcodec/tests/rangecoder$(EXESUF)
 fate-rangecoder: CMD = run libavcodec/tests/rangecoder$(EXESUF)

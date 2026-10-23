@@ -36,6 +36,11 @@ fate-seek_utils: libavformat/tests/seek_utils$(EXESUF)
 fate-seek_utils: CMD = run libavformat/tests/seek_utils$(EXESUF)
 fate-seek_utils: CMP = null
 
+FATE_LIBAVFORMAT-$(CONFIG_AAC_PARSER) += fate-parser-timestamp
+fate-parser-timestamp: libavformat/tests/parser_timestamp$(EXESUF)
+fate-parser-timestamp: CMD = run libavformat/tests/parser_timestamp$(EXESUF)
+fate-parser-timestamp: CMP = null
+
 FATE_LIBAVFORMAT += $(FATE_LIBAVFORMAT-yes)
 FATE-$(CONFIG_AVFORMAT) += $(FATE_LIBAVFORMAT)
 fate-libavformat: $(FATE_LIBAVFORMAT)

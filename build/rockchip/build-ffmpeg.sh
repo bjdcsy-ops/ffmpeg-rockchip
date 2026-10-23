@@ -67,6 +67,7 @@ build_ffmpeg() {
     --enable-libdrm
     --enable-rkmpp
     --enable-rkrga
+    --enable-zlib
     --enable-network
     --enable-protocol=file
     --enable-protocol=pipe
@@ -81,6 +82,7 @@ build_ffmpeg() {
     --enable-demuxer=h264
     --enable-demuxer=hevc
     --enable-demuxer=mov
+    --enable-demuxer=image2
     --enable-muxer=rtsp
     --enable-muxer=rtp
     --enable-muxer=rtp_mpegts
@@ -111,6 +113,7 @@ build_ffmpeg() {
     --enable-decoder=mp2
     --enable-decoder=mp3
     --enable-decoder=opus
+    --enable-decoder=png
     --enable-decoder=pcm_alaw
     --enable-decoder=pcm_mulaw
     --enable-decoder=pcm_s16be
@@ -283,16 +286,21 @@ build_ffmpeg() {
     rm -f -- .version
     make_targets=(
       all
+      fate-parser
+      fate-parser-timestamp
       libavcodec/tests/rkmppenc_roi
       fate-rkmppenc-roi
     )
     make_targets+=(
+      libavfilter/tests/rkrga_common
       libavfilter/tests/frame_decision_roi
       libavfilter/tests/frame_decision_roi_control
     )
     LD_LIBRARY_PATH="$DEPS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
       make -j"$(nproc)" \
         "${make_targets[@]}"
+    LD_LIBRARY_PATH="$DEPS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+      ./libavfilter/tests/rkrga_common
     LD_LIBRARY_PATH="$DEPS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
       ./libavfilter/tests/frame_decision_roi
     LD_LIBRARY_PATH="$DEPS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
@@ -314,6 +322,7 @@ build_ffmpeg() {
     CONFIG_MP3_DECODER
     CONFIG_MPEG4_RKMPP_DECODER
     CONFIG_OPUS_DECODER
+    CONFIG_PNG_DECODER
     CONFIG_PCM_ALAW_DECODER
     CONFIG_PCM_MULAW_DECODER
     CONFIG_PCM_S16BE_DECODER
@@ -331,6 +340,7 @@ build_ffmpeg() {
     CONFIG_H264_DEMUXER
     CONFIG_HEVC_DEMUXER
     CONFIG_MOV_DEMUXER
+    CONFIG_IMAGE2_DEMUXER
     CONFIG_RTSP_MUXER
     CONFIG_RTP_MUXER
     CONFIG_RTP_MPEGTS_MUXER
@@ -367,6 +377,7 @@ build_ffmpeg() {
     CONFIG_OVERLAY_RKRGA_FILTER
     CONFIG_FORMAT_FILTER
     CONFIG_NULL_FILTER
+    CONFIG_ZLIB
   )
   required_configs+=(
     CONFIG_FRAME_DECISION_ROI_FILTER

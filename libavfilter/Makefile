@@ -700,6 +700,7 @@ TOOLS     = graph2dot
 TESTPROGS = drawutils filtfmts formats integral
 
 TESTPROGS-$(CONFIG_DRAWVG_FILTER) += drawvg
+TESTPROGS-$(CONFIG_RKRGA) += rkrga_common
 TESTPROGS-$(CONFIG_FRAME_DECISION_ROI_FILTER) += frame_decision_roi
 TESTPROGS-$(CONFIG_FRAME_DECISION_ROI_FILTER) += frame_decision_roi_control
 

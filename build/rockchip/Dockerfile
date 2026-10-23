@@ -29,6 +29,7 @@ RUN apt-get update \
         ninja-build \
         patchelf \
         pkg-config \
+        zlib1g-dev \
     && rm -rf /var/lib/apt/lists/* \
     && curl -fsSLo /tmp/shellcheck.tar.xz \
         "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/shellcheck-v${SHELLCHECK_VERSION}.linux.aarch64.tar.xz" \

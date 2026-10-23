@@ -1394,6 +1394,10 @@ TESTPROGS-$(CONFIG_HEVC_METADATA_BSF)     += h265_levels
 TESTPROGS-$(CONFIG_RANGECODER)            += rangecoder
 TESTPROGS-$(CONFIG_SNOW_ENCODER)          += snowenc
 
+ifeq ($(CONFIG_AAC_PARSER)$(CONFIG_H264_PARSER)$(CONFIG_HEVC_PARSER),yesyesyes)
+TESTPROGS += parser
+endif
+
 TESTOBJS = dctref.o
 
 TOOLS = fourcc2pixfmt

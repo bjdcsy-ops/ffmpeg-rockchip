@@ -25,6 +25,11 @@ command -v mtree >/dev/null
 actionlint "$REPOSITORY_ROOT/.github/workflows/rockchip-build.yml"
 hadolint --ignore DL3008 "$ROCKCHIP_BUILD_DIR/Dockerfile"
 
+for test_name in test_watermark_control.py test_watermark_remote.py; do
+  PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover \
+    -s "$ROCKCHIP_BUILD_DIR/tests" -p "$test_name"
+done
+
 if grep -Fq "\$ORIGIN/../lib" \
   "$ROCKCHIP_BUILD_DIR/lib/package-runtime.sh"; then
   printf 'Runtime packaging must use only %s.\n' "\$ORIGIN/lib" >&2

@@ -145,7 +145,7 @@ int av_parser_parse2(AVCodecParserContext *s, AVCodecContext *avctx,
 
     if (!(s->flags & PARSER_FLAG_FETCHED_OFFSET)) {
         s->next_frame_offset =
-        s->cur_offset        = pos;
+        s->cur_offset        = pos < 0 ? 0 : pos;
         s->flags            |= PARSER_FLAG_FETCHED_OFFSET;
     }
 
