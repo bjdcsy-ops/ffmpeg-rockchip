@@ -362,6 +362,12 @@ EOF
 set -euo pipefail
 
 printf 'make %s\n' "$*" >>"$ROCKCHIP_TEST_MAKE_LOG"
+if [[ " $* " = *" libavfilter/tests/rkrga_common "* ]]; then
+  mkdir -p libavfilter/tests
+  printf '#!/usr/bin/env bash\nexit 0\n' \
+    >libavfilter/tests/rkrga_common
+  chmod 0755 libavfilter/tests/rkrga_common
+fi
 if [[ " $* " = *" libavfilter/tests/frame_decision_roi "* ]]; then
   mkdir -p libavfilter/tests
   printf '#!/usr/bin/env bash\nexit 0\n' \

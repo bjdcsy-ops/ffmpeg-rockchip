@@ -259,6 +259,16 @@ static RGAFrame *get_free_frame(RGAFrame **list)
     return out;
 }
 
+static int get_overlay_blend_mode(int alpha, int premultiply)
+{
+    if (alpha < 0xff) {
+        /* DST_OVER keeps main as src and places the watermark on pat. */
+        return (premultiply ? (0x4 | (1 << 12)) : 0x4) |
+               (0xffU << 16) | ((alpha & 0xffU) << 24);
+    }
+    return premultiply ? 0x504 : 0x501;
+}
+
 static void set_colorspace_info(RGAFrameInfo *in_info,
                                 enum AVColorSpace in_spc,
                                 enum AVColorRange in_rng,
@@ -308,11 +318,11 @@ static void set_colorspace_info(RGAFrameInfo *in_info,
     else if (!rgb_in && rgb_out) {
         /* yuv full/limit -> rgb full */
         switch (in_rng) {
+        case AVCOL_RANGE_UNSPECIFIED:
         case AVCOL_RANGE_MPEG:
-            if (in_spc == AVCOL_SPC_BT709)
-                out_mode = 3 << 0; /* IM_YUV_TO_RGB_BT709_LIMIT */
-            if (in_spc == AVCOL_SPC_BT470BG)
-                out_mode = 1 << 0; /* IM_YUV_TO_RGB_BT601_LIMIT */
+            /* Match librga's BT.601 limited default for untagged YUV. */
+            out_mode = in_spc == AVCOL_SPC_BT709 ? 3 /* IM_YUV_TO_RGB_BT709_LIMIT */
+                                                : 1; /* IM_YUV_TO_RGB_BT601_LIMIT */
             break;
         case AVCOL_RANGE_JPEG:
 #if 0
@@ -653,6 +663,14 @@ static RGAFrame *query_frame(RKRGAContext *r, AVFilterLink *outlink,
         if (in1_info && picref_pat) {
             enum AVColorSpace pat_colorspace = picref_pat->colorspace;
             enum AVColorRange pat_color_range = picref_pat->color_range;
+
+            if (!(in0_info->pix_desc->flags & AV_PIX_FMT_FLAG_RGB) &&
+                !(out_info->pix_desc->flags & AV_PIX_FMT_FLAG_RGB)) {
+                if (out_frame->frame->colorspace == AVCOL_SPC_UNSPECIFIED)
+                    out_frame->frame->colorspace = AVCOL_SPC_BT470BG;
+                if (out_frame->frame->color_range == AVCOL_RANGE_UNSPECIFIED)
+                    out_frame->frame->color_range = AVCOL_RANGE_MPEG;
+            }
             /* yuv2rgb src->pat */
             set_colorspace_info(in0_info, in->colorspace, in->color_range,
                                 in1_info, &pat_colorspace, &pat_color_range,
@@ -1183,13 +1201,8 @@ av_cold int ff_rkrga_init(AVFilterContext *avctx, RKRGAParam *param)
         if (r->in_rga_frame_infos[1].pix_desc->flags & AV_PIX_FMT_FLAG_ALPHA)
             need_premultiply = param->in_alpha_format == 0;
 
-        /* IM_ALPHA_BLEND_DST_OVER */
-        if (param->in_global_alpha > 0 && param->in_global_alpha < 0xff) {
-            r->in_rga_frame_infos[0].blend_mode = need_premultiply ? (0x4 | (1 << 12)) : 0x4;
-            r->in_rga_frame_infos[0].blend_mode |= (param->in_global_alpha & 0xff) << 16; /* fg_global_alpha */
-            r->in_rga_frame_infos[0].blend_mode |= 0xff << 24;                            /* bg_global_alpha */
-        } else
-            r->in_rga_frame_infos[0].blend_mode = need_premultiply ? 0x504 : 0x501;
+        r->in_rga_frame_infos[0].blend_mode = get_overlay_blend_mode(param->in_global_alpha,
+                                                                   need_premultiply);
 
         r->in_rga_frame_infos[1].overlay_x = FFMAX(param->overlay_x, 0);
         r->in_rga_frame_infos[1].overlay_y = FFMAX(param->overlay_y, 0);

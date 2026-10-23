@@ -290,12 +290,15 @@ build_ffmpeg() {
       fate-rkmppenc-roi
     )
     make_targets+=(
+      libavfilter/tests/rkrga_common
       libavfilter/tests/frame_decision_roi
       libavfilter/tests/frame_decision_roi_control
     )
     LD_LIBRARY_PATH="$DEPS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
       make -j"$(nproc)" \
         "${make_targets[@]}"
+    LD_LIBRARY_PATH="$DEPS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
+      ./libavfilter/tests/rkrga_common
     LD_LIBRARY_PATH="$DEPS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
       ./libavfilter/tests/frame_decision_roi
     LD_LIBRARY_PATH="$DEPS_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" \
